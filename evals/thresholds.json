@@ -1,0 +1,10 @@
+{
+  "_说明": "CI 门禁阈值。band_accuracy 必须同时看 lift（相对多数类基线的提升），否则标注偏斜时高分是假的。",
+  "band_accuracy": 0.78,
+  "band_lift_min": 0.2,
+  "json_validity": 1.0,
+  "retrieval_hit5": 0.85,
+  "retrieval_paraphrase_hit5": 0.6,
+  "agent_task_success": 0.8,
+  "avg_latency_s_max": 8.0
+}

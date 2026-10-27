@@ -1,0 +1,2 @@
+{"task": "bigdata 学习计划", "direction": "bigdata", "min_tools": 2, "must_mention": ["卡", "错题"], "max_minutes": 60}
+{"task": "backend 学习计划", "direction": "backend", "min_tools": 2, "must_mention": ["卡"], "max_minutes": 60}

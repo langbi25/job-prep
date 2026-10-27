@@ -1,0 +1,14 @@
+{"query": "消息可靠性 不丢失 数据重复消费", "expected_card_id": "kb-bigdata-kafka-002", "kind": "keyword"}
+{"query": "滚动窗口 滑动窗口 会话窗口区别", "expected_card_id": "kb-bigdata-flink-001", "kind": "keyword"}
+{"query": "实时数仓 埋点日志 看板 PV UV", "expected_card_id": "kb-bigdata-gen-001", "kind": "keyword"}
+{"query": "RDB AOF 区别", "expected_card_id": "kb-backend-redis-001", "kind": "keyword"}
+{"query": "进程挂了内存里的东西还能找回来吗", "expected_card_id": "kb-backend-redis-001", "kind": "paraphrase"}
+{"query": "消费者重启之后怎么找回上次读到哪了", "expected_card_id": "kb-bigdata-kafka-002", "kind": "paraphrase"}
+{"query": "同一个用户的数据全挤到一台机器上怎么办", "expected_card_id": "kb-bigdata-flink-002", "kind": "paraphrase"}
+{"query": "大促当天看板要秒级刷新，整个链路怎么搭", "expected_card_id": "kb-bigdata-gen-001", "kind": "paraphrase"}
+{"query": "按时间把数据流切开，有几种切法", "expected_card_id": "kb-bigdata-flink-001", "kind": "paraphrase"}
+{"query": "面试官问我消息丢了怎么办", "expected_card_id": "kb-bigdata-kafka-002", "kind": "paraphrase"}
+{"query": "消息既不能丢也不能重，怎么做到刚好一次", "expected_card_id": "kb-bigdata-kafka-002", "kind": "distractor"}
+{"query": "数据分布不均导致少数机器特别忙", "expected_card_id": "kb-bigdata-flink-002", "kind": "distractor"}
+{"query": "如何定位任务里的热点key", "expected_card_id": "kb-bigdata-flink-002", "kind": "distractor"}
+{"query": "Redis 断电后数据怎么恢复", "expected_card_id": "kb-backend-redis-001", "kind": "distractor"}

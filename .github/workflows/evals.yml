@@ -1,0 +1,70 @@
+name: evals
+
+# 两层门禁：
+#  fast-checks：每次 push/PR 必跑，零 LLM 成本（语法 + 检索两档）
+#  full-gate  ：配置了 LLM_API_KEY secret 才跑，全量评测 + 门禁，不达标直接红
+# 这样"没配 key 的 fork 也能跑快检"，配了 key 的仓库获得完整保护。
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch: {}        # 手动触发入口（Actions 页签）
+
+concurrency:
+  group: evals-${{ github.ref }}
+  cancel-in-progress: true     # 连续 push 时只保留最后一次
+
+jobs:
+  fast-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+      - name: 语法检查
+        run: python -m compileall -q app scripts
+      - name: 检索快检（fts/hybrid，无 LLM 调用）
+        run: python scripts/run_evals.py --skip-llm
+
+  full-gate:
+    needs: fast-checks        # 快检不过就没必要花钱
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HAS_KEY: ${{ secrets.LLM_API_KEY != '' }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ vars.LLM_BASE_URL || 'https://api.deepseek.com/v1' }}
+      LLM_MODEL: ${{ vars.LLM_MODEL || 'deepseek-chat' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # embedding 模型 90MB，缓存住省下每次的下载时间（走镜像加速）
+      - name: 缓存 embedding 模型
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub
+          key: hf-bge-small-zh-v1.5
+          restore-keys: hf-bge-small-zh-v1.5
+      - name: 安装依赖
+        run: |
+          export HF_ENDPOINT=https://hf-mirror.com
+          pip install -r requirements.txt
+      - name: 全量评测 + 门禁
+        if: env.HAS_KEY == 'true'
+        run: |
+          export HF_ENDPOINT=https://hf-mirror.com
+          python scripts/run_evals.py --gate
+      - name: 未配置 LLM_API_KEY，跳过全量门禁
+        if: env.HAS_KEY != 'true'
+        run: |
+          echo "::warning::未配置 LLM_API_KEY secret，本轮跳过全量评测。"
+          echo "在仓库 Settings → Secrets → Actions 添加 LLM_API_KEY 后自动启用。"

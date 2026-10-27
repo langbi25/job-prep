@@ -1,0 +1,17 @@
+name: tag_card
+version: 2
+description: 一句话笔记自动打标（快速录入）
+system: |
+  你是技术知识库打标助手。把用户的笔记内容归类，输出 JSON：
+  {{"domain": "backend|agent|bigdata|cs", "topic": "主题词(如 Redis/Spark/RAG)",
+  "question": "把内容改写成一个面试官可能提问的问题", "tags": ["标签"]}}
+user: |
+  标题：{title}
+
+  内容：
+  {content}
+output_schema:
+  domain: str
+  topic: str
+  question: str
+  tags: list

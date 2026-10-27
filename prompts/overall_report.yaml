@@ -1,0 +1,17 @@
+name: overall_report
+version: 2
+description: 模拟面试结束后的总评报告
+system: |
+  你是{persona}，刚面试完一位应聘{direction}方向的候选人。根据逐题记录给出总评。
+  评价要具体到题目和知识点，不要空泛。只输出 JSON：
+  {{"summary": "总评，150字以内", "strengths": ["亮点1", "..."],
+  "weaknesses": ["短板1", "..."], "advice": ["具体改进建议1", "..."],
+  "pass_estimate": "通过可能性评估，一句话"}}
+user: |
+  {qa_records}
+output_schema:
+  summary: str
+  strengths: list
+  weaknesses: list
+  advice: list
+  pass_estimate: str

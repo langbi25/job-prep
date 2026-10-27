@@ -1,0 +1,161 @@
+{
+  "timestamp": "2026-10-27T00:49:38",
+  "llm_calls": 13,
+  "scoring": {
+    "suite": "scoring_calibration",
+    "cases": 13,
+    "band_accuracy": 0.769,
+    "json_validity": 1.0,
+    "avg_latency_s": 2.2,
+    "details": [
+      {
+        "question": "Spark shuffle 有哪几种实现，各自的问题是什么？",
+        "expected": "high",
+        "got": "mid",
+        "avg": 6.8,
+        "ok": false
+      },
+      {
+        "question": "Spark shuffle 有哪几种实现，各自的问题是什么？",
+        "expected": "low",
+        "got": "low",
+        "avg": 1.5,
+        "ok": true
+      },
+      {
+        "question": "Redis 的 RDB 和 AOF 各自原理与取舍？",
+        "expected": "high",
+        "got": "high",
+        "avg": 7.5,
+        "ok": true
+      },
+      {
+        "question": "Redis 的 RDB 和 AOF 各自原理与取舍？",
+        "expected": "mid",
+        "got": "low",
+        "avg": 3.8,
+        "ok": false
+      },
+      {
+        "question": "Kafka 怎么保证消息不丢？",
+        "expected": "high",
+        "got": "high",
+        "avg": 8.2,
+        "ok": true
+      },
+      {
+        "question": "Kafka 怎么保证消息不丢？",
+        "expected": "mid",
+        "got": "low",
+        "avg": 1.2,
+        "ok": false
+      },
+      {
+        "question": "Flink 反压怎么排查？",
+        "expected": "high",
+        "got": "high",
+        "avg": 7.2,
+        "ok": true
+      },
+      {
+        "question": "Flink 反压怎么排查？",
+        "expected": "low",
+        "got": "low",
+        "avg": 0.2,
+        "ok": true
+      },
+      {
+        "question": "数仓分层怎么设计的，分层依据是什么？",
+        "expected": "high",
+        "got": "high",
+        "avg": 7.0,
+        "ok": true
+      },
+      {
+        "question": "你们数仓分层的依据，DIM 层怎么设计的？",
+        "expected": "mid",
+        "got": "mid",
+        "avg": 6.5,
+        "ok": true
+      },
+      {
+        "question": "TCP 为什么需要三次握手，两次行不行？",
+        "expected": "high",
+        "got": "high",
+        "avg": 7.5,
+        "ok": true
+      },
+      {
+        "question": "TCP 为什么需要三次握手，两次行不行？",
+        "expected": "low",
+        "got": "low",
+        "avg": 1.8,
+        "ok": true
+      },
+      {
+        "question": "手写一道 SQL，窗口函数 over partition b",
+        "expected": "high",
+        "got": "high",
+        "avg": 7.0,
+        "ok": true
+      }
+    ]
+  },
+  "retrieval": {
+    "suite": "retrieval_hit_at_5",
+    "cases": 5,
+    "hit_rate": 1.0,
+    "details": [
+      {
+        "query": "消息可靠性 不丢失 数据重复消费",
+        "expected": "kb-bigdata-kafka-002",
+        "got": [
+          "kb-bigdata-kafka-002",
+          "kb-bigdata-gen-001",
+          "kb-bigdata-flink-002"
+        ],
+        "ok": true
+      },
+      {
+        "query": "持久化 快照 日志 崩溃恢复",
+        "expected": "kb-backend-redis-001",
+        "got": [
+          "kb-backend-redis-001",
+          "kb-bigdata-kafka-002",
+          "kb-bigdata-gen-001"
+        ],
+        "ok": true
+      },
+      {
+        "query": "作业消费不动了 吞吐上不去 buffer 堆积",
+        "expected": "kb-bigdata-flink-001",
+        "got": [
+          "kb-bigdata-flink-002",
+          "kb-bigdata-kafka-002",
+          "kb-backend-redis-001"
+        ],
+        "ok": true
+      },
+      {
+        "query": "个别任务处理的数据量特别大 其他都很闲",
+        "expected": "kb-bigdata-flink-002",
+        "got": [
+          "kb-bigdata-flink-002",
+          "kb-bigdata-kafka-002",
+          "kb-bigdata-gen-001"
+        ],
+        "ok": true
+      },
+      {
+        "query": "滚动窗口 滑动窗口 会话窗口区别",
+        "expected": "kb-bigdata-flink-001",
+        "got": [
+          "kb-bigdata-flink-001",
+          "kb-backend-redis-001",
+          "kb-bigdata-flink-002"
+        ],
+        "ok": true
+      }
+    ]
+  }
+}

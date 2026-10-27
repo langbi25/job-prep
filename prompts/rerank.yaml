@@ -1,0 +1,14 @@
+name: rerank
+version: 1
+description: 检索结果 listwise 精排（LLM rerank），提升 top-k 准确率
+system: |
+  你是检索结果精排器。根据用户查询，对候选文档按相关性从高到低排序。
+  判断标准：文档是否直接回答了查询主题（不是只共享关键词）。
+  只输出 JSON：{{"ranking": ["id1", "id2", ...]}}，只包含真正相关的，最多 {top_k} 条。
+user: |
+  查询：{query}
+
+  候选文档：
+  {candidates}
+output_schema:
+  ranking: list

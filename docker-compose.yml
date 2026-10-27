@@ -1,0 +1,46 @@
+services:
+  api:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8765 --workers 1
+    env_file: .env
+    environment:
+      HF_ENDPOINT: https://hf-mirror.com
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./data:/app/data
+      - ./knowledge:/app/knowledge
+      - ./interviews:/app/interviews
+      - ./inbox:/app/inbox
+      - ./reports:/app/reports
+      - ./evals:/app/evals
+      - model_cache:/root/.cache/huggingface/hub
+    # SQLite 单写者：多 worker 只会互相抢写锁，永远用 1 个
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8765/health',timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s   # 首次启动要建库 + 加载向量模型，给足时间
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    restart: unless-stopped
+
+  ui:
+    build: .
+    command: streamlit run ui/streamlit_app.py --server.port 8501 --server.address 0.0.0.0 --server.headless true
+    environment:
+      JOBPREP_API: http://api:8765
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    restart: unless-stopped
+
+volumes:
+  model_cache:

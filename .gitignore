@@ -1,0 +1,6 @@
+.env
+data/kb.sqlite
+__pycache__/
+.venv/
+reports/
+.eval-artifacts/
