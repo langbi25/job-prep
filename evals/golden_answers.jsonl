@@ -60,3 +60,18 @@
 {"question": "分库分表之后跨库 join 怎么办？", "qtype": "场景", "topic": "分布式", "answer": "一般不能直接 join 了，可以改成两次查询在应用层拼装，或者把要关联的数据冗余一份，也可以走宽表。", "expected_band": "mid"}
 {"question": "消息队列怎么选型？", "qtype": "场景", "topic": "Kafka", "answer": "看吞吐和延迟，Kafka 吞吐高适合日志和大数据场景，RocketMQ 对业务消息支持好有事务消息，RabbitMQ 延迟低适合小规模。", "expected_band": "mid"}
 {"question": "布隆过滤器的原理是什么？", "qtype": "八股", "topic": "Redis", "answer": "用多个哈希函数把元素映射到位数组的多个位置并置 1，查询时如果有一个位置是 0 就一定不存在，全是 1 则可能存在。所以它只能判断不存在，有误判率。", "expected_band": "mid"}
+{"question": "Redis 持久化 RDB 和 AOF 有什么区别？", "qtype": "八股", "topic": "Redis", "answer": "RDB 就是把内存数据存成文件，AOF 是存日志。一般用 RDB 就够了，AOF 太慢没人用。", "expected_band": "low"}
+{"question": "Kafka 为什么快？", "qtype": "八股", "topic": "Kafka", "answer": "因为它是用 Java 写的，性能天生就好，而且消息存在内存里，读写都很快。", "expected_band": "low"}
+{"question": "Flink 的 watermark 是干什么的？", "qtype": "八股", "topic": "Flink", "answer": "watermark 就是给数据打的时间戳，有了它数据就知道自己是什么时候的，不会乱序。", "expected_band": "low"}
+{"question": "MySQL 索引为什么用 B+ 树不用 hash？", "qtype": "八股", "topic": "MySQL", "answer": "因为 B+ 树是 MySQL 的默认索引，hash 是 Redis 用的，数据库就用树。", "expected_band": "low"}
+{"question": "TCP 三次握手的过程是什么？", "qtype": "八股", "topic": "网络", "answer": "客户端发个请求，服务端同意，然后就建立了，大概就是三次来回。", "expected_band": "low"}
+{"question": "什么是幂等？怎么实现？", "qtype": "八股", "topic": "分布式", "answer": "幂等就是请求很快的意思，实现的话加缓存就幂等了。", "expected_band": "low"}
+{"question": "JVM 内存分哪几块？", "qtype": "八股", "topic": "JVM", "answer": "分堆和栈，还有方法区，对象放堆里，变量放栈里，大概就这三个。", "expected_band": "low"}
+{"question": "RAG 是什么？为什么要用？", "qtype": "概念", "topic": "RAG", "answer": "RAG 就是检索增强，把文档喂给大模型，它就不胡说了，效果很好。", "expected_band": "low"}
+{"question": "Kafka 怎么保证消息不丢失？", "qtype": "场景", "topic": "Kafka", "answer": "生产端把 acks 设置成 all，broker 端多副本，消费端手动提交 offset，这样消息就不会丢。", "expected_band": "mid"}
+{"question": "Flink 反压是什么，怎么看出来？", "qtype": "场景", "topic": "Flink", "answer": "反压就是下游处理不过来，数据积压在上游。在 Web UI 上看背压状态标红就是有反压。", "expected_band": "mid"}
+{"question": "Redis 为什么快？", "qtype": "八股", "topic": "Redis", "answer": "纯内存操作，加上单线程没有锁竞争，还有 IO 多路复用，所以快。", "expected_band": "mid"}
+{"question": "InnoDB 为什么选 B+ 树？", "qtype": "八股", "topic": "MySQL", "answer": "B+ 树矮胖，磁盘 IO 次数少，叶子节点用链表串起来范围查询也方便，hash 不支持范围查询。", "expected_band": "mid"}
+{"question": "什么是限流？常见的算法有哪些？", "qtype": "场景", "topic": "分布式", "answer": "限流就是控制请求速率保护系统，常见算法有计数器、滑动窗口、漏桶和令牌桶。", "expected_band": "mid"}
+{"question": "CAP 定理说的是什么？", "qtype": "概念", "topic": "分布式", "answer": "一致性、可用性、分区容忍三者只能同时满足两个，分布式系统网络分区不可避免，所以实际是在 C 和 A 之间取舍。", "expected_band": "mid"}
+{"question": "Agent 的 function calling 是怎么工作的？", "qtype": "概念", "topic": "Agent", "answer": "把工具的名字、参数 schema 告诉模型，模型决定调用哪个工具并输出参数，代码执行完把结果传回去，模型继续。", "expected_band": "mid"}

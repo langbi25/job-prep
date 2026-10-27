@@ -44,7 +44,12 @@ def _card_text(c) -> str:
 
 
 def ensure_all_indexed() -> dict:
-    """懒索引：为所有卡片和题目建立/更新向量。"""
+    """懒索引：为所有卡片和题目建立/更新向量，并清掉已失效实体的残留向量。
+
+    为什么必须清理：embeddings 表是独立索引，不随 kb_cards.status 变化。
+    卡片被归档/合并后如果向量还在，hybrid 检索的向量路会继续把它捞出来
+    （FTS 路有 status 过滤，向量路没有），表现为"明明归档了却还在推荐"。
+    """
     if not embedder.available():
         return {"enabled": False, "cards": 0, "questions": 0}
     conn = get_conn()
@@ -53,11 +58,29 @@ def ensure_all_indexed() -> dict:
             "SELECT * FROM kb_cards WHERE status='active'").fetchall()]
         questions = [(r["id"], r["text"]) for r in conn.execute(
             "SELECT id, text FROM question_pool").fetchall()]
+        # 清理残留：归档卡 / 已删除的题目
+        stale = conn.execute(
+            "SELECT entity_type, entity_id FROM embeddings").fetchall()
+        valid = {"card": {c[0] for c in cards}, "question": {q[0] for q in questions}}
+        removed = 0
+        for row in stale:
+            if row["entity_id"] not in valid.get(row["entity_type"], set()):
+                conn.execute("DELETE FROM embeddings WHERE entity_type=? AND entity_id=?",
+                             (row["entity_type"], row["entity_id"]))
+                removed += 1
+        conn.commit()
+        # 规模防护：numpy 暴力余弦在几千条时 <10ms，过万后每次查询都全量扫描，
+        # 延迟和内存都会线性恶化。这里只告警不阻塞——换 Chroma/pgvector 的
+        # 换手点在 embedder.search_similar，接口不变。
+        total = len(cards) + len(questions)
+        if total > 8000:
+            print(f"[warn] 向量实体数 {total} 已超暴力扫描舒适区（<8000），"
+                  "建议迁移到 Chroma/pgvector：embedder.search_similar 是预留的换手点")
     finally:
         conn.close()
     n1 = embedder.ensure_indexed("card", cards)
     n2 = embedder.ensure_indexed("question", questions)
-    return {"enabled": True, "cards": n1, "questions": n2}
+    return {"enabled": True, "cards": n1, "questions": n2, "stale_removed": removed}
 
 
 def _fts_search(conn, scope: str, query: str, limit: int = 10) -> list[str]:

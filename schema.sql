@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS kb_cards (
   last_review_at TEXT,
   srs_due       TEXT,
   status        TEXT NOT NULL DEFAULT 'active',
+  merged_into   TEXT REFERENCES kb_cards(id),  -- merge_card 动作：重复卡指向保留卡
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );

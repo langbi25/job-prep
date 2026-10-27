@@ -47,6 +47,16 @@ def _drop_stale_fts(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _ensure_columns(conn: sqlite3.Connection) -> None:
+    """轻量列迁移：给已存在的库补新增列（schema.sql 只对新建库生效）。
+
+    SQLite 的 ALTER TABLE ADD COLUMN 很便宜，逐个判断比引入迁移框架更务实。
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(kb_cards)")}
+    if "merged_into" not in cols:
+        conn.execute("ALTER TABLE kb_cards ADD COLUMN merged_into TEXT REFERENCES kb_cards(id)")
+
+
 def init_db():
     """执行 schema.sql 建库建表（幂等），并保证两套全文索引与内容表一致。"""
     ensure_dirs()
@@ -54,6 +64,7 @@ def init_db():
     try:
         _drop_stale_fts(conn)
         conn.executescript(_SCHEMA.read_text(encoding="utf-8"))
+        _ensure_columns(conn)
         # 外部内容 FTS 与内容表漂移时 MATCH 只会静默漏召回，比报错更难查。
         # 千级行 rebuild 是毫秒级，启动时全量重建换确定性很划算。
         for table in _FTS_TRIGGERS:

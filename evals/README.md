@@ -89,6 +89,23 @@ python scripts/run_evals.py            # 全量（约 3~4 分钟，含 LLM 调�
 python scripts/run_evals.py --skip-llm # 只跑检索（fts/hybrid），秒级
 python scripts/run_evals.py --gate     # 全量 + 门禁，不达标退出码 1
 python scripts/ci_gate.py              # 只判定最近一次结果，零 LLM 调用（适合 pre-commit/CI）
+python scripts/run_evals.py --gate --stability  # 边界用例三次取中位数，抑制判分抖动
 ```
 
 改 prompt、改检索参数、换模型后都应该跑一次 `--gate`，并对比新旧 `results-*.json`。
+
+## 五、CI 门禁（GitHub Actions）
+
+`.github/workflows/evals.yml`，两层设计：
+
+| 层 | 触发 | 内容 | 成本 |
+|---|---|---|---|
+| `fast-checks` | 每次 push / PR | 语法检查 + `--skip-llm` 检索快检 | 零 |
+| `full-gate` | 同上，但**需要 secret** | 全量评测 + 门禁 | 每次 ~百次 LLM 调用 |
+
+启用全量门禁：仓库 **Settings → Secrets and variables → Actions** 添加
+`LLM_API_KEY`（可选变量 `LLM_BASE_URL` / `LLM_MODEL`，默认 DeepSeek）。
+没配 secret 时 `fast-checks` 照常跑，`full-gate` 打 warning 跳过，不会假绿。
+
+CI 环境数据库为空也能跑：知识卡片是 `knowledge/` 下的 md 文件，启动时由
+`sync_all()` 自动收编入库——**Markdown 是唯一事实源**这一设计在这里直接兑现了。

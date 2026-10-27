@@ -16,7 +16,7 @@ from ..core import llm, prompts
 from ..core.db import get_conn
 from . import kb_service
 
-ALLOWED_KINDS = {"create_card", "boost_srs"}
+ALLOWED_KINDS = {"create_card", "boost_srs", "merge_card", "archive_card"}
 
 
 def _now() -> str:
@@ -46,10 +46,9 @@ def draft_remediation(session_id: str) -> dict:
     finally:
         conn.close()
 
-    system, user, _ = prompts.render(
+    system, user, version = prompts.render(
         "remediation_plan", report_summary=report_summary, weak_data=weak_data, cards=cards_text)
-    msg = llm._chat_json(system, user)
-    data = json.loads(msg["content"])
+    data = llm.chat_parsed(system, user)
 
     created = []
     conn = get_conn()
@@ -87,6 +86,55 @@ def list_actions(status: str | None = "pending") -> list[dict]:
         conn.close()
 
 
+def _archive_card(conn, card_id: str) -> dict:
+    """归档卡片：status 置 archived + 删向量 + 同步 md frontmatter。
+
+    两个容易漏的点：
+    1) embeddings 表不随 status 走，只改 status 的话归档卡会继续从 hybrid
+       检索的向量路里冒出来（FTS 路有 status 过滤，向量路没有）；
+    2) md 是事实源，不同步 frontmatter 的话，空库重新 sync 时归档卡会复活。
+    """
+    row = conn.execute("SELECT file_path FROM kb_cards WHERE id=?", (card_id,)).fetchone()
+    if not row:
+        raise ValueError(f"卡片不存在: {card_id}")
+    conn.execute("UPDATE kb_cards SET status='archived' WHERE id=?", (card_id,))
+    conn.execute("DELETE FROM embeddings WHERE entity_type='card' AND entity_id=?", (card_id,))
+    kb_service.update_md_meta(row["file_path"], {"status": "archived"})
+    return {"archived": card_id}
+
+
+def _merge_card(conn, payload: dict) -> dict:
+    """合并重复卡：保留卡留下，重复卡归档并指向保留卡。
+
+    只做归档指向（merged_into），不搬运内容——搬运意味着改写保留卡，风险大于收益，
+    真要合并内容应该由人在 Obsidian 里改 md（Markdown 是事实源，库里只是索引）。
+    掌握度取两者较高值：复习进度不该因为去重而倒退。
+    """
+    keeper = payload.get("keeper_card_id") or payload.get("card_id")
+    dup = payload.get("duplicate_card_id") or payload.get("duplicate_id")
+    if not keeper or not dup:
+        raise ValueError("merge_card 需要 keeper_card_id 与 duplicate_card_id")
+    if keeper == dup:
+        raise ValueError("不能把卡片合并给它自己")
+    k = conn.execute("SELECT * FROM kb_cards WHERE id=?", (keeper,)).fetchone()
+    d = conn.execute("SELECT * FROM kb_cards WHERE id=?", (dup,)).fetchone()
+    if not k or not d:
+        raise ValueError(f"卡片不存在: keeper={keeper}, duplicate={dup}")
+    if d["status"] != "active":
+        raise ValueError(f"重复卡不是 active 状态: {dup}（{d['status']}）")
+    if k["status"] != "active":
+        raise ValueError(f"保留卡不是 active 状态: {keeper}，请先换一张保留卡")
+
+    result = _archive_card(conn, dup)
+    conn.execute("UPDATE kb_cards SET merged_into=? WHERE id=?", (keeper, dup))
+    conn.execute(
+        "UPDATE kb_cards SET mastery=MAX(mastery,?), review_count=review_count+? WHERE id=?",
+        (d["mastery"], d["review_count"], keeper))
+    kb_service.update_md_meta(d["file_path"], {"status": "archived", "merged_into": keeper})
+    return {"merged": dup, "into": keeper,
+            "carried_mastery": d["mastery"], "carried_reviews": d["review_count"]}
+
+
 def decide(action_id: str, approve: bool) -> dict:
     """人工审批。approve=True 执行动作并把结果写回。"""
     conn = get_conn()
@@ -122,6 +170,10 @@ def decide(action_id: str, approve: bool) -> dict:
                 if cur.rowcount == 0:
                     raise ValueError(f"卡片不存在: {cid}")
                 result = {"boosted": cid}
+            elif row["kind"] == "merge_card":
+                result = _merge_card(conn, payload)
+            elif row["kind"] == "archive_card":
+                result = _archive_card(conn, payload.get("card_id"))
             else:
                 raise ValueError(f"未知动作类型: {row['kind']}")
             conn.execute(

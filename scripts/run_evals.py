@@ -41,19 +41,45 @@ def _load_jsonl(path: Path) -> list[dict]:
     return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
 
 
+# 档位边界（与 band_of 保持一致），用于判断哪些用例需要抗抖动重评
+BAND_EDGES = (5.0, 7.0)
+EDGE_TOLERANCE = 0.5
+
+
+def near_edge(avg: float) -> bool:
+    return any(abs(avg - e) <= EDGE_TOLERANCE for e in BAND_EDGES)
+
+
+def _score_once(c: dict) -> tuple[float, bool]:
+    """评一次，返回 (四维均分, 是否解析成功)。"""
+    ctx = context_builder.build_eval_context(c["topic"], c["question"])
+    ev = llm.evaluate_answer({"text": c["question"], "qtype": c["qtype"]}, c["answer"], "", ctx)
+    s = ev["scores"]
+    avg = sum(s[d] for d in ("correctness", "depth", "structure", "highlight")) / 4
+    return avg, True
+
+
 # ---------- 1. 评分校准 ----------
-def eval_scoring() -> dict:
+def eval_scoring(stability: bool = False) -> dict:
     cases = _load_jsonl(EVALS_DIR / "golden_answers.jsonl")
     correct, valid, latencies, details = 0, 0, [], []
+    rescored = 0
     for c in cases:
         t0 = time.time()
         try:
-            ctx = context_builder.build_eval_context(c["topic"], c["question"])
-            ev = llm.evaluate_answer({"text": c["question"], "qtype": c["qtype"]}, c["answer"], "", ctx)
+            avg, _ = _score_once(c)
             latencies.append(time.time() - t0)
             valid += 1
-            s = ev["scores"]
-            avg = sum(s[d] for d in ("correctness", "depth", "structure", "highlight")) / 4
+            # 边界用例重评两次取中位数：LLM judge 在档位边界附近的抖动是固有噪声
+            # （同一回答跨轮 6.8 → 3.2 的极端情况另有上下文污染原因，已修），
+            # 这里只处理 ±0.5 容差内的温和抖动，控制成本（最多 ×3 调用）。
+            if stability and near_edge(avg):
+                others = []
+                for _ in range(2):
+                    a2, _ = _score_once(c)
+                    others.append(a2)
+                avg = sorted([avg] + others)[1]
+                rescored += 1
             got = band_of(avg)
             ok = got == c["expected_band"]
             correct += ok
@@ -72,6 +98,7 @@ def eval_scoring() -> dict:
     return {"cases": n, "band_accuracy": round(acc, 3),
             "majority_baseline": round(baseline, 3), "lift": round(acc - baseline, 3),
             "band_distribution": dict(counts),
+            "stability_rescored": rescored if stability else None,
             "json_validity": round(valid / n, 3),
             "avg_latency_s": round(sum(latencies) / len(latencies), 1) if latencies else None,
             "details": details}
@@ -191,6 +218,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-llm", action="store_true")
     parser.add_argument("--gate", action="store_true")
+    parser.add_argument("--stability", action="store_true",
+                        help="边界用例（均分在档位边界 ±0.5 内）重评 2 次取中位数，抑制判分抖动")
     args = parser.parse_args()
 
     ensure_dirs()
@@ -199,7 +228,7 @@ def main():
     before = llm.stats()["calls"]
 
     if not args.skip_llm:
-        report["scoring"] = eval_scoring()
+        report["scoring"] = eval_scoring(stability=args.stability)
         report["agent_tasks"] = eval_agent_tasks()
         report["retrieval"] = eval_retrieval(("fts", "hybrid", "full"))
     else:

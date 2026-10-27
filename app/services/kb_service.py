@@ -20,6 +20,37 @@ def _safe_name(s: str) -> str:
     return re.sub(r'[\\/:*?"<>|]', "_", s).strip() or "untitled"
 
 
+_FM_SPLIT_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+
+
+def update_md_meta(rel_path: str, updates: dict) -> bool:
+    """更新卡片 md 的 frontmatter 字段（不存在则追加）。
+
+    归档/合并必须同步改 md——md 是事实源，只改库的话，
+    换台机器（或 CI 空库）重新 sync 时，归档卡会以 active 身份复活。
+    """
+    p = config.KB_DIR / rel_path
+    if not p.exists():
+        return False
+    text = p.read_text(encoding="utf-8")
+    m = _FM_SPLIT_RE.match(text)
+    if not m:
+        return False
+    lines = m.group(1).splitlines()
+    rest = text[m.end():]
+    for key, val in updates.items():
+        if val is None:
+            continue
+        for i, l in enumerate(lines):
+            if l.startswith(f"{key}:"):
+                lines[i] = f"{key}: {val}"
+                break
+        else:
+            lines.append(f"{key}: {val}")
+    p.write_text("---\n" + "\n".join(lines) + "\n---\n\n" + rest, encoding="utf-8")
+    return True
+
+
 def _next_card_id(conn: sqlite3.Connection, domain: str, topic: str) -> str:
     abbr = re.sub(r"[^a-zA-Z]", "", topic)[:8].lower() or "gen"
     prefix = f"kb-{domain}-{abbr}-"

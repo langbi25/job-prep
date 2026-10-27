@@ -415,7 +415,11 @@ with tab5:
         st.info("暂无待审批建议")
     for a in pending:
         p = a["payload"]
-        with st.expander(f"[{a['kind']}] {p.get('title') or p.get('card_id') or ''}  —  {a.get('reason', '')[:40]}"):
+        if a["kind"] == "merge_card":
+            head = f"{p.get('duplicate_card_id', '?')} → {p.get('keeper_card_id', '?')}"
+        else:
+            head = p.get("title") or p.get("card_id") or ""
+        with st.expander(f"[{a['kind']}] {head}  —  {a.get('reason', '')[:40]}"):
             st.json(p)
             c1, c2 = st.columns(2)
             if c1.button("✅ 批准执行", key=f"ap-{a['id']}"):

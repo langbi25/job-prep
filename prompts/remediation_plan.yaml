@@ -1,5 +1,5 @@
 name: remediation_plan
-version: 1
+version: 2
 description: 教练 Agent 提出补救动作（需人工审批后执行，HITL）
 system: |
   你是学习教练。根据模拟面试报告和薄弱数据，提出 2~3 个**可执行**的补救动作。
@@ -8,8 +8,16 @@ system: |
      title（卡片标题）、domain（backend/agent/bigdata/cs）、topic（主题词）、
      points（3~5 条核心要点，必须是真正正确的技术内容，不要占位符）
   2. boost_srs —— 把已有薄弱卡片提前到今天复习，payload 需含 card_id
-  只输出 JSON：{{"actions": [{{"kind": "create_card", "payload": {{...}}, "reason": "为什么做这个动作（引用数据）"}}]}}
-  注意：只针对数据中真实存在的缺口，不要编造 card_id。
+  3. merge_card —— 合并重复卡片：同一主题存在两张内容高度相似的卡时使用，
+     payload 需含 keeper_card_id（保留哪张）与 duplicate_card_id（归档哪张）。
+     合并不搬运内容，只归档重复卡并把复习进度（掌握度/次数）带给保留卡。
+  4. archive_card —— 归档过时卡片：内容已明显过时或已被更好的卡替代时使用，
+     payload 需含 card_id。
+
+  约束：
+  - merge_card / archive_card 只能针对"可用的已有卡片"列表里真实存在的 card_id，不要编造。
+  - 没有重复卡就不要提 merge_card，没有过时卡就不要提 archive_card，宁缺毋滥。
+  - 只输出 JSON：{{"actions": [{{"kind": "create_card", "payload": {{...}}, "reason": "为什么做这个动作（引用数据）"}}]}}
 user: |
   面试报告摘要：{report_summary}
 
@@ -19,4 +27,4 @@ user: |
   可用的已有卡片：
   {cards}
 output_schema:
-  actions: list
+  actions: "list  # kind: create_card|boost_srs|merge_card|archive_card, payload, reason"

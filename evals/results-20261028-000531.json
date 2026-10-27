@@ -1,0 +1,1070 @@
+{
+  "timestamp": "2026-10-27T23:59:03",
+  "llm_calls": 167,
+  "scoring": {
+    "cases": 77,
+    "band_accuracy": 0.961,
+    "majority_baseline": 0.481,
+    "lift": 0.481,
+    "band_distribution": {
+      "high": 37,
+      "low": 18,
+      "mid": 22
+    },
+    "stability_rescored": 29,
+    "json_validity": 1.0,
+    "avg_latency_s": 2.5,
+    "details": [
+      {
+        "q": "Spark shuffle 有哪几种实现，各自的问题",
+        "exp": "high",
+        "got": "high",
+        "avg": 7.2,
+        "ok": true
+      },
+      {
+        "q": "Spark shuffle 有哪几种实现，各自的问题",
+        "exp": "low",
+        "got": "low",
+        "avg": 3.5,
+        "ok": true
+      },
+      {
+        "q": "Redis 的 RDB 和 AOF 各自原理与取舍？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.5,
+        "ok": true
+      },
+      {
+        "q": "Redis 的 RDB 和 AOF 各自原理与取舍？",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 5.0,
+        "ok": true
+      },
+      {
+        "q": "Kafka 怎么保证消息不丢？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.5,
+        "ok": true
+      },
+      {
+        "q": "Kafka 怎么保证消息不丢？",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 6.8,
+        "ok": true
+      },
+      {
+        "q": "Flink 反压怎么排查？",
+        "exp": "high",
+        "got": "high",
+        "avg": 7.2,
+        "ok": true
+      },
+      {
+        "q": "Flink 反压怎么排查？",
+        "exp": "low",
+        "got": "low",
+        "avg": 1.2,
+        "ok": true
+      },
+      {
+        "q": "数仓分层怎么设计的，分层依据是什么？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.2,
+        "ok": true
+      },
+      {
+        "q": "你们数仓分层的依据，DIM 层怎么设计的？",
+        "exp": "high",
+        "got": "high",
+        "avg": 7.0,
+        "ok": true
+      },
+      {
+        "q": "TCP 为什么需要三次握手，两次行不行？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.2,
+        "ok": true
+      },
+      {
+        "q": "TCP 为什么需要三次握手，两次行不行？",
+        "exp": "low",
+        "got": "low",
+        "avg": 3.0,
+        "ok": true
+      },
+      {
+        "q": "手写一道 SQL，窗口函数 over partiti",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.2,
+        "ok": true
+      },
+      {
+        "q": "MySQL 的 InnoDB 和 MyISAM 有什",
+        "exp": "high",
+        "got": "high",
+        "avg": 7.2,
+        "ok": true
+      },
+      {
+        "q": "MySQL 的 InnoDB 和 MyISAM 有什",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 5.2,
+        "ok": true
+      },
+      {
+        "q": "MySQL 的事务隔离级别有哪几种，默认是哪个？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.2,
+        "ok": true
+      },
+      {
+        "q": "MySQL 的事务隔离级别有哪几种，默认是哪个？",
+        "exp": "low",
+        "got": "low",
+        "avg": 4.5,
+        "ok": true
+      },
+      {
+        "q": "MySQL 索引为什么用 B+ 树，不用 B 树或哈",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.2,
+        "ok": true
+      },
+      {
+        "q": "MySQL 慢查询怎么优化？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.0,
+        "ok": true
+      },
+      {
+        "q": "MySQL 慢查询怎么优化？",
+        "exp": "low",
+        "got": "low",
+        "avg": 3.8,
+        "ok": true
+      },
+      {
+        "q": "Redis 缓存击穿、穿透、雪崩分别是什么，怎么解决",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.0,
+        "ok": true
+      },
+      {
+        "q": "Redis 缓存击穿、穿透、雪崩分别是什么，怎么解决",
+        "exp": "mid",
+        "got": "low",
+        "avg": 4.8,
+        "ok": false
+      },
+      {
+        "q": "怎么实现一个分布式锁？Redis 方案要注意什么？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.2,
+        "ok": true
+      },
+      {
+        "q": "怎么实现一个分布式锁？Redis 方案要注意什么？",
+        "exp": "low",
+        "got": "low",
+        "avg": 4.0,
+        "ok": true
+      },
+      {
+        "q": "接口怎么保证幂等？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.5,
+        "ok": true
+      },
+      {
+        "q": "接口怎么保证幂等？",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 5.5,
+        "ok": true
+      },
+      {
+        "q": "Kafka 怎么保证消息顺序？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.5,
+        "ok": true
+      },
+      {
+        "q": "Kafka 重复消费怎么处理？",
+        "exp": "high",
+        "got": "high",
+        "avg": 7.5,
+        "ok": true
+      },
+      {
+        "q": "Flink 的 checkpoint 和 savep",
+        "exp": "high",
+        "got": "high",
+        "avg": 7.2,
+        "ok": true
+      },
+      {
+        "q": "Flink 水位线（watermark）是干什么的？",
+        "exp": "high",
+        "got": "high",
+        "avg": 7.0,
+        "ok": true
+      },
+      {
+        "q": "Flink 状态后端有哪几种？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.5,
+        "ok": true
+      },
+      {
+        "q": "Spark 内存管理是怎么划分的？",
+        "exp": "high",
+        "got": "high",
+        "avg": 7.0,
+        "ok": true
+      },
+      {
+        "q": "Spark 数据倾斜怎么解决？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.5,
+        "ok": true
+      },
+      {
+        "q": "Spark 数据倾斜怎么解决？",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 6.0,
+        "ok": true
+      },
+      {
+        "q": "为什么 Spark 比 MapReduce 快？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.2,
+        "ok": true
+      },
+      {
+        "q": "拉链表是什么，怎么实现？",
+        "exp": "high",
+        "got": "high",
+        "avg": 7.2,
+        "ok": true
+      },
+      {
+        "q": "湖仓一体和传统数仓有什么区别？",
+        "exp": "high",
+        "got": "high",
+        "avg": 7.5,
+        "ok": true
+      },
+      {
+        "q": "什么是 RAG，完整链路包括哪些环节？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.5,
+        "ok": true
+      },
+      {
+        "q": "什么是 RAG，完整链路包括哪些环节？",
+        "exp": "mid",
+        "got": "low",
+        "avg": 4.8,
+        "ok": false
+      },
+      {
+        "q": "怎么评估一个 RAG 系统的效果？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.5,
+        "ok": true
+      },
+      {
+        "q": "RAG 里切分策略怎么选？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.5,
+        "ok": true
+      },
+      {
+        "q": "Prompt 注入攻击怎么防？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.5,
+        "ok": true
+      },
+      {
+        "q": "Prompt 注入攻击怎么防？",
+        "exp": "low",
+        "got": "low",
+        "avg": 3.5,
+        "ok": true
+      },
+      {
+        "q": "多 Agent 协作有哪些常见模式？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.2,
+        "ok": true
+      },
+      {
+        "q": "Agent 的上下文窗口不够用怎么办？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.5,
+        "ok": true
+      },
+      {
+        "q": "大模型幻觉怎么缓解？",
+        "exp": "high",
+        "got": "high",
+        "avg": 7.5,
+        "ok": true
+      },
+      {
+        "q": "大模型幻觉怎么缓解？",
+        "exp": "low",
+        "got": "low",
+        "avg": 3.8,
+        "ok": true
+      },
+      {
+        "q": "进程和线程的区别？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.5,
+        "ok": true
+      },
+      {
+        "q": "IO 多路复用是什么？select、poll、epo",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.0,
+        "ok": true
+      },
+      {
+        "q": "HTTP 和 HTTPS 的区别？TLS 握手过程？",
+        "exp": "high",
+        "got": "high",
+        "avg": 7.2,
+        "ok": true
+      },
+      {
+        "q": "设计一个短链系统",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.2,
+        "ok": true
+      },
+      {
+        "q": "设计一个短链系统",
+        "exp": "low",
+        "got": "low",
+        "avg": 4.5,
+        "ok": true
+      },
+      {
+        "q": "秒杀系统怎么设计？",
+        "exp": "high",
+        "got": "high",
+        "avg": 8.5,
+        "ok": true
+      },
+      {
+        "q": "秒杀系统怎么设计？",
+        "exp": "low",
+        "got": "low",
+        "avg": 4.2,
+        "ok": true
+      },
+      {
+        "q": "Redis 缓存穿透、击穿、雪崩分别是什么？",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 5.0,
+        "ok": true
+      },
+      {
+        "q": "TCP 三次握手为什么不能是两次？",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 5.5,
+        "ok": true
+      },
+      {
+        "q": "接口幂等怎么保证？",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 6.5,
+        "ok": true
+      },
+      {
+        "q": "JVM 的分代回收是怎么回事？",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 6.8,
+        "ok": true
+      },
+      {
+        "q": "MySQL 索引什么情况下会失效？",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 6.2,
+        "ok": true
+      },
+      {
+        "q": "分库分表之后跨库 join 怎么办？",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 6.0,
+        "ok": true
+      },
+      {
+        "q": "消息队列怎么选型？",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 5.8,
+        "ok": true
+      },
+      {
+        "q": "布隆过滤器的原理是什么？",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 6.8,
+        "ok": true
+      },
+      {
+        "q": "Redis 持久化 RDB 和 AOF 有什么区别？",
+        "exp": "low",
+        "got": "low",
+        "avg": 2.8,
+        "ok": true
+      },
+      {
+        "q": "Kafka 为什么快？",
+        "exp": "low",
+        "got": "low",
+        "avg": 1.2,
+        "ok": true
+      },
+      {
+        "q": "Flink 的 watermark 是干什么的？",
+        "exp": "low",
+        "got": "low",
+        "avg": 1.2,
+        "ok": true
+      },
+      {
+        "q": "MySQL 索引为什么用 B+ 树不用 hash？",
+        "exp": "low",
+        "got": "low",
+        "avg": 1.2,
+        "ok": true
+      },
+      {
+        "q": "TCP 三次握手的过程是什么？",
+        "exp": "low",
+        "got": "low",
+        "avg": 1.5,
+        "ok": true
+      },
+      {
+        "q": "什么是幂等？怎么实现？",
+        "exp": "low",
+        "got": "low",
+        "avg": 1.2,
+        "ok": true
+      },
+      {
+        "q": "JVM 内存分哪几块？",
+        "exp": "low",
+        "got": "low",
+        "avg": 4.0,
+        "ok": true
+      },
+      {
+        "q": "RAG 是什么？为什么要用？",
+        "exp": "low",
+        "got": "low",
+        "avg": 3.8,
+        "ok": true
+      },
+      {
+        "q": "Kafka 怎么保证消息不丢失？",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 6.0,
+        "ok": true
+      },
+      {
+        "q": "Flink 反压是什么，怎么看出来？",
+        "exp": "mid",
+        "got": "low",
+        "avg": 4.5,
+        "ok": false
+      },
+      {
+        "q": "Redis 为什么快？",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 5.8,
+        "ok": true
+      },
+      {
+        "q": "InnoDB 为什么选 B+ 树？",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 6.2,
+        "ok": true
+      },
+      {
+        "q": "什么是限流？常见的算法有哪些？",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 5.0,
+        "ok": true
+      },
+      {
+        "q": "CAP 定理说的是什么？",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 6.5,
+        "ok": true
+      },
+      {
+        "q": "Agent 的 function calling 是",
+        "exp": "mid",
+        "got": "mid",
+        "avg": 6.5,
+        "ok": true
+      }
+    ]
+  },
+  "agent_tasks": {
+    "cases": 2,
+    "success_rate": 1.0,
+    "details": [
+      {
+        "task": "bigdata 学习计划",
+        "ok": true,
+        "checks": {
+          "tools": true,
+          "data_referenced": true,
+          "time_budget": true
+        },
+        "tools": [
+          "get_daily_brief",
+          "get_top_questions",
+          "get_weak_topics",
+          "list_due_cards",
+          "list_open_mistakes"
+        ],
+        "items": 6,
+        "minutes": 60
+      },
+      {
+        "task": "backend 学习计划",
+        "ok": true,
+        "checks": {
+          "tools": true,
+          "data_referenced": true,
+          "time_budget": true
+        },
+        "tools": [
+          "get_daily_brief",
+          "get_top_questions",
+          "get_weak_topics",
+          "list_due_cards",
+          "list_open_mistakes"
+        ],
+        "items": 6,
+        "minutes": 60
+      }
+    ]
+  },
+  "retrieval": {
+    "fts": {
+      "cases": 14,
+      "hit5": 0.643,
+      "mrr": 0.643,
+      "by_kind": {
+        "distractor": {
+          "cases": 4,
+          "hit5": 0.75,
+          "mrr": 0.75
+        },
+        "keyword": {
+          "cases": 4,
+          "hit5": 1.0,
+          "mrr": 1.0
+        },
+        "paraphrase": {
+          "cases": 6,
+          "hit5": 0.333,
+          "mrr": 0.333
+        }
+      },
+      "details": [
+        {
+          "q": "消息可靠性 不丢失 数据重复消费",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-flink-003"
+          ],
+          "ok": true
+        },
+        {
+          "q": "滚动窗口 滑动窗口 会话窗口区别",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-flink-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "实时数仓 埋点日志 看板 PV UV",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-gen-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "RDB AOF 区别",
+          "kind": "keyword",
+          "top3": [
+            "kb-backend-redis-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "进程挂了内存里的东西还能找回来吗",
+          "kind": "paraphrase",
+          "top3": [],
+          "ok": false
+        },
+        {
+          "q": "消费者重启之后怎么找回上次读到哪了",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "同一个用户的数据全挤到一台机器上怎么办",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-flink-003"
+          ],
+          "ok": false
+        },
+        {
+          "q": "大促当天看板要秒级刷新，整个链路怎么搭",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002"
+          ],
+          "ok": false
+        },
+        {
+          "q": "按时间把数据流切开，有几种切法",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-flink-003"
+          ],
+          "ok": false
+        },
+        {
+          "q": "面试官问我消息丢了怎么办",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "消息既不能丢也不能重，怎么做到刚好一次",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-kafka-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "数据分布不均导致少数机器特别忙",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-flink-003"
+          ],
+          "ok": false
+        },
+        {
+          "q": "如何定位任务里的热点key",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-flink-002",
+            "kb-bigdata-flink-003"
+          ],
+          "ok": true
+        },
+        {
+          "q": "Redis 断电后数据怎么恢复",
+          "kind": "distractor",
+          "top3": [
+            "kb-backend-redis-001",
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-flink-003"
+          ],
+          "ok": true
+        }
+      ]
+    },
+    "hybrid": {
+      "cases": 14,
+      "hit5": 1.0,
+      "mrr": 0.732,
+      "by_kind": {
+        "distractor": {
+          "cases": 4,
+          "hit5": 1.0,
+          "mrr": 0.708
+        },
+        "keyword": {
+          "cases": 4,
+          "hit5": 1.0,
+          "mrr": 1.0
+        },
+        "paraphrase": {
+          "cases": 6,
+          "hit5": 1.0,
+          "mrr": 0.569
+        }
+      },
+      "details": [
+        {
+          "q": "消息可靠性 不丢失 数据重复消费",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-flink-003",
+            "kb-bigdata-gen-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "滚动窗口 滑动窗口 会话窗口区别",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-flink-001",
+            "kb-bigdata-flink-003",
+            "kb-backend-redis-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "实时数仓 埋点日志 看板 PV UV",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-gen-001",
+            "kb-backend-redis-001",
+            "kb-bigdata-flink-003"
+          ],
+          "ok": true
+        },
+        {
+          "q": "RDB AOF 区别",
+          "kind": "keyword",
+          "top3": [
+            "kb-backend-redis-001",
+            "kb-bigdata-flink-001",
+            "kb-bigdata-flink-003"
+          ],
+          "ok": true
+        },
+        {
+          "q": "进程挂了内存里的东西还能找回来吗",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-backend-redis-001",
+            "kb-bigdata-flink-003"
+          ],
+          "ok": true
+        },
+        {
+          "q": "消费者重启之后怎么找回上次读到哪了",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-flink-003",
+            "kb-bigdata-gen-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "同一个用户的数据全挤到一台机器上怎么办",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-flink-003",
+            "kb-bigdata-flink-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "大促当天看板要秒级刷新，整个链路怎么搭",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-backend-redis-001",
+            "kb-bigdata-gen-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "按时间把数据流切开，有几种切法",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-flink-003",
+            "kb-bigdata-flink-002",
+            "kb-backend-redis-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "面试官问我消息丢了怎么办",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-flink-003",
+            "kb-bigdata-flink-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "消息既不能丢也不能重，怎么做到刚好一次",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-backend-redis-001",
+            "kb-bigdata-flink-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "数据分布不均导致少数机器特别忙",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-flink-003",
+            "kb-bigdata-gen-001",
+            "kb-bigdata-flink-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "如何定位任务里的热点key",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-flink-002",
+            "kb-bigdata-flink-003",
+            "kb-bigdata-flink-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "Redis 断电后数据怎么恢复",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-flink-003",
+            "kb-backend-redis-001",
+            "kb-bigdata-kafka-002"
+          ],
+          "ok": true
+        }
+      ]
+    },
+    "full": {
+      "cases": 14,
+      "hit5": 1.0,
+      "mrr": 1.0,
+      "by_kind": {
+        "distractor": {
+          "cases": 4,
+          "hit5": 1.0,
+          "mrr": 1.0
+        },
+        "keyword": {
+          "cases": 4,
+          "hit5": 1.0,
+          "mrr": 1.0
+        },
+        "paraphrase": {
+          "cases": 6,
+          "hit5": 1.0,
+          "mrr": 1.0
+        }
+      },
+      "details": [
+        {
+          "q": "消息可靠性 不丢失 数据重复消费",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-gen-001",
+            "kb-bigdata-flink-003"
+          ],
+          "ok": true
+        },
+        {
+          "q": "滚动窗口 滑动窗口 会话窗口区别",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-flink-001",
+            "kb-bigdata-flink-003",
+            "kb-backend-redis-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "实时数仓 埋点日志 看板 PV UV",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-gen-001",
+            "kb-backend-redis-001",
+            "kb-bigdata-flink-003"
+          ],
+          "ok": true
+        },
+        {
+          "q": "RDB AOF 区别",
+          "kind": "keyword",
+          "top3": [
+            "kb-backend-redis-001",
+            "kb-bigdata-flink-003",
+            "kb-bigdata-flink-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "进程挂了内存里的东西还能找回来吗",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-backend-redis-001",
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-flink-003"
+          ],
+          "ok": true
+        },
+        {
+          "q": "消费者重启之后怎么找回上次读到哪了",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-flink-003",
+            "kb-bigdata-gen-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "同一个用户的数据全挤到一台机器上怎么办",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-flink-002",
+            "kb-bigdata-gen-001",
+            "kb-bigdata-flink-003"
+          ],
+          "ok": true
+        },
+        {
+          "q": "大促当天看板要秒级刷新，整个链路怎么搭",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-gen-001",
+            "kb-bigdata-flink-003",
+            "kb-bigdata-kafka-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "按时间把数据流切开，有几种切法",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-flink-001",
+            "kb-bigdata-flink-003",
+            "kb-bigdata-flink-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "面试官问我消息丢了怎么办",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-flink-003",
+            "kb-backend-redis-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "消息既不能丢也不能重，怎么做到刚好一次",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-gen-001",
+            "kb-backend-redis-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "数据分布不均导致少数机器特别忙",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-flink-002",
+            "kb-bigdata-flink-003",
+            "kb-bigdata-gen-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "如何定位任务里的热点key",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-flink-002",
+            "kb-bigdata-flink-003",
+            "kb-bigdata-flink-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "Redis 断电后数据怎么恢复",
+          "kind": "distractor",
+          "top3": [
+            "kb-backend-redis-001",
+            "kb-bigdata-flink-003",
+            "kb-bigdata-kafka-002"
+          ],
+          "ok": true
+        }
+      ]
+    }
+  }
+}

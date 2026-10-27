@@ -64,7 +64,24 @@ free -h   # 确认 swap 2G
 
 1. **bookmarklet 指向服务器**：把 `http://localhost:8765` 换成 `http://<服务器IP>:8765`
 2. **Streamlit 后端地址**：compose 已设 `JOBPREP_API=http://api:8765`；裸机部署在 `.env` 或启动命令里设 `JOBPREP_API=http://<服务器IP>:8765`
-3. **公网暴露**：建议前置 Caddy/Nginx 加 Basic Auth，别裸奔（内含你的知识库和 API Key）
+3. **公网暴露**：建议前置 Caddy 加 Basic Auth，别裸奔（内含你的知识库和 API Key）。最小配置：
+
+   ```
+   # /etc/caddy/Caddyfile
+   jobprep.example.com {
+       basic_auth {
+           yourname $2a$14$bcrypt哈希    # caddy hash-password 生成
+       }
+       handle /api/* {
+           reverse_proxy localhost:8765
+       }
+       handle {
+           reverse_proxy localhost:8501
+       }
+   }
+   ```
+
+   注意 LLM_API_KEY 永远只放在服务器 `.env`，不要进 git（`.gitignore` 已排除）。
 
 ## 数据备份
 
