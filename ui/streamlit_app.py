@@ -5,6 +5,12 @@
 import json
 import os
 
+# 前端 → 后端是本机回环请求，绝不能走系统代理：代理连不回 localhost 时
+# 健康检查失败，所有按钮会被 disabled（实测踩坑：全局代理劫持 localhost）。
+_no_proxy = {p.strip() for p in os.environ.get("NO_PROXY", "").split(",") if p.strip()}
+_no_proxy |= {"localhost", "127.0.0.1"}
+os.environ["NO_PROXY"] = os.environ["no_proxy"] = ",".join(sorted(_no_proxy))
+
 import httpx
 import streamlit as st
 
@@ -16,7 +22,7 @@ try:
     health = httpx.get(f"{API}/health", timeout=3).json()
     st.sidebar.success("后端已连接")
 except Exception:
-    st.sidebar.error("后端未启动：uvicorn app.main:app --port 8000")
+    st.sidebar.error("后端未启动：uvicorn app.main:app --port 8765")
     health = None
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📥 采集台", "📚 知识库", "🗂 面经库", "🎤 模拟面试", "🔁 复习·错题", "📈 雷达·冲刺"])
