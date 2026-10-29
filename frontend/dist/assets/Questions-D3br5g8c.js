@@ -1,0 +1,1 @@
+import{P as e}from"./Placeholder-CaXeL34m.js";import{a as o,g as r}from"./index-BRi7NRLt.js";const n={__name:"Questions",setup(t){return(a,s)=>(o(),r(e,{url:"/api/questions?limit=100"}))}};export{n as default};

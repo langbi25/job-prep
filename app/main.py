@@ -1,5 +1,6 @@
 import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -49,6 +50,17 @@ app.include_router(flywheel.router)
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+# Vue3 前端（frontend/dist 构建产物）。hash 路由，StaticFiles 托管即可，无需 SPA fallback。
+# 挂在所有 API 路由之后：/api/* 与 /health 不受影响。
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if _DIST.is_dir():
+    app.mount("/", StaticFiles(directory=_DIST, html=True), name="frontend")
+else:
+    print(f"[startup] frontend dist not found ({_DIST}), UI served by Streamlit only")
 
 
 @app.get("/ingest")

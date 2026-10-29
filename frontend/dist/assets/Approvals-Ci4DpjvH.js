@@ -1,0 +1,1 @@
+import{P as a}from"./Placeholder-CaXeL34m.js";import{a as r,g as e}from"./index-BRi7NRLt.js";const n={__name:"Approvals",setup(o){return(t,c)=>(r(),e(a,{url:"/api/agent/actions"}))}};export{n as default};
