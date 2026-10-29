@@ -209,3 +209,22 @@ CREATE TABLE IF NOT EXISTS agent_actions (
   created_at  TEXT NOT NULL,
   decided_at  TEXT
 );
+
+-- ============ 飞轮：作战地图 / 真实结果回录（阶段 8） ============
+CREATE TABLE IF NOT EXISTS coverage_reports (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  interview_id  TEXT NOT NULL REFERENCES feed_interviews(id),
+  generated_at  TEXT NOT NULL,
+  payload_json  TEXT NOT NULL,
+  UNIQUE(interview_id)              -- 重跑直接覆盖
+);
+
+CREATE TABLE IF NOT EXISTS interview_outcomes (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  company       TEXT,
+  occurred_on   TEXT NOT NULL,      -- 面试日期
+  result        TEXT DEFAULT 'unknown',   -- pass / fail / unknown
+  notes         TEXT,
+  questions_json TEXT NOT NULL DEFAULT '[]',  -- [{text, self_band(0-10), matched_qid?}]
+  created_at    TEXT NOT NULL
+);
