@@ -141,9 +141,8 @@ def _norm_text(s: str) -> str:
 def _same_question(a: str, b: str, min_ratio: float = 0.9) -> bool:
     """字面相似度判定（dedupe 用，比向量可信）。
 
-    中文 2-gram FTS 只能说明"有共同片段"，不能说明是同一题：
-    "多 Agent 协作任务怎么拆分" 与 "Memory 怎么做的" 共享 "怎么" 就算命中。
-    所以 FTS 仅用来**召回候选**，是否同一题由字符级相似度裁决。
+    不能靠 FTS 判定：unicode61 把整段中文当作一个 token，2-gram 前缀只能命中
+    "词首"，句子中间的片段一条都召回不了。所以候选召回改为 3-gram 重合度预筛。
     """
     import difflib
 
@@ -155,8 +154,71 @@ def _same_question(a: str, b: str, min_ratio: float = 0.9) -> bool:
     return difflib.SequenceMatcher(None, na, nb).ratio() >= min_ratio
 
 
+def _grams(s: str, n: int = 3) -> set[str]:
+    t = _norm_text(s)
+    if len(t) < n:
+        return {t} if t else set()
+    return {t[i:i + n] for i in range(len(t) - n + 1)}
+
+
+def _text_candidates(conn, text: str, limit: int = 5) -> list:
+    """按 3-gram 重合度从题目池里召回字面候选（不依赖 FTS）。"""
+    rows = conn.execute(
+        "SELECT id, text FROM question_pool WHERE merged_into IS NULL LIMIT 5000").fetchall()
+    g = _grams(text)
+    if not g:
+        return []
+    scored = []
+    for r in rows:
+        gr = _grams(r["text"])
+        if not gr:
+            continue
+        overlap = len(g & gr) / min(len(g), len(gr))
+        if overlap >= 0.3:
+            scored.append((overlap, r))
+    scored.sort(key=lambda x: -x[0])
+    return [r for _, r in scored[:limit]]
+
+
+def search_questions(q: str, limit: int = 200) -> list:
+    """题目子串搜索（中文友好）。多个词按"命中词数"排序，而不是 AND 全部命中。
+
+    不用 question_fts：中文分词器缺位导致句中出现的关键词无法命中，
+    万级以内 LIKE 全表扫描是毫秒级，正确性优先。
+    """
+    toks = [t for t in re.split(r"\s+", (q or "").strip()) if t]
+    if not toks:
+        return []
+    where = " OR ".join(["(text LIKE ? OR aliases_json LIKE ?)"] * len(toks))
+    args: list = []
+    for t in toks:
+        args += [f"%{t}%", f"%{t}%"]
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM question_pool WHERE merged_into IS NULL AND (" + where + ") LIMIT 3000",
+            args).fetchall()
+        # IDF 加权：像 "Agent" 这种几乎每道题都有的词不该主导排序
+        hays = {(r["text"] or "") + " " + (r["aliases_json"] or ""): r for r in rows}
+        import math
+
+        df = {t: sum(1 for h in hays if t in h) for t in toks}
+        weight = {t: 1.0 / (1.0 + math.log(max(1, df[t]))) for t in toks}
+        scored = []
+        for hay, r in hays.items():
+            hit = sum(1 for t in toks if t in hay)
+            if not hit:
+                continue
+            score = sum(weight[t] for t in toks if t in hay)
+            scored.append((score, hit, r["freq_count"], dict(r)))
+        scored.sort(key=lambda x: (-x[0], -x[1], -x[2]))
+        return [x[3] for x in scored[:limit]]
+    finally:
+        conn.close()
+
+
 def find_similar_question(text: str, threshold: float = 0.95, ensure_index: bool = False) -> str | None:
-    """题目查重：精确 → FTS 召回 + 字面裁决 → 向量语义（高阈值）。
+    """题目查重：精确 → 3-gram 候选 + 字面裁决 → 向量语义（高阈值）。
 
     ensure_index 默认 False：调用方可能正持有写事务（如 confirm_ingest），
     此时重建索引会开第二个连接去写 embeddings，直接 SQLITE_BUSY 死锁。
@@ -167,16 +229,9 @@ def find_similar_question(text: str, threshold: float = 0.95, ensure_index: bool
         row = conn.execute("SELECT id FROM question_pool WHERE text=?", (text,)).fetchone()
         if row:
             return row["id"]
-        try:
-            cands = conn.execute(
-                "SELECT p.id, p.text FROM question_fts f JOIN question_pool p ON p.rowid=f.rowid "
-                "WHERE question_fts MATCH ? AND p.merged_into IS NULL ORDER BY bm25(question_fts) LIMIT 5",
-                (_fts_query(text),)).fetchall()
-            for c in cands:
-                if _same_question(text, c["text"]):
-                    return c["id"]
-        except Exception:
-            pass
+        for c in _text_candidates(conn, text):
+            if _same_question(text, c["text"]):
+                return c["id"]
     finally:
         conn.close()
     # 换一种问法的同一题交给向量，但阈值必须高（bge-small 同领域长句余弦普遍 0.85+）

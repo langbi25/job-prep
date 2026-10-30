@@ -69,22 +69,45 @@ def radar():
 
 
 @router.get("/questions")
-def list_questions(q: str | None = None, qtype: str | None = None, topic: str | None = None, limit: int = 50):
+def list_questions(q: str | None = None, qtype: str | None = None, topic: str | None = None,
+                   limit: int = 200, with_coverage: bool = False):
+    """题目池列表。with_coverage=True 时附带"是否有知识卡覆盖"（逐题语义匹配，约 1ms/题）。"""
+    import json
+
     conn = get_conn()
     try:
-        sql = "SELECT id, text, aliases_json, qtype, topic, freq_count, last_seen_at FROM question_pool WHERE merged_into IS NULL"
-        args: list = []
-        if qtype:
-            sql += " AND qtype=?"; args.append(qtype)
-        if topic:
-            sql += " AND topic=?"; args.append(topic)
         if q:
-            sql = ("SELECT p.id, p.text, p.aliases_json, p.qtype, p.topic, p.freq_count, p.last_seen_at "
-                   "FROM question_fts f JOIN question_pool p ON p.rowid=f.rowid WHERE question_fts MATCH ? AND p.merged_into IS NULL")
-            args = [q]
-        sql += " ORDER BY freq_count DESC LIMIT ?"; args.append(limit)
-        rows = conn.execute(sql, args).fetchall()
-        return [dict(r) | {"aliases": __import__("json").loads(r["aliases_json"])} for r in rows]
+            from ..services.rag_service import search_questions
+
+            rows = [dict(r) for r in search_questions(q, limit=limit)]
+            if qtype:
+                rows = [r for r in rows if r["qtype"] == qtype]
+            if topic:
+                rows = [r for r in rows if r["topic"] == topic]
+        else:
+            sql = ("SELECT * FROM question_pool p WHERE p.merged_into IS NULL")
+            args: list = []
+            if qtype:
+                sql += " AND p.qtype=?"
+                args.append(qtype)
+            if topic:
+                sql += " AND p.topic=?"
+                args.append(topic)
+            sql += " ORDER BY p.freq_count DESC, p.last_seen_at DESC LIMIT ?"
+            args.append(limit)
+            rows = [dict(r) for r in conn.execute(sql, args).fetchall()]
+        occ = {r["question_id"]: r["n"] for r in conn.execute(
+            "SELECT question_id, COUNT(*) AS n FROM question_occurrences GROUP BY question_id")}
+        out = [r | {"aliases": json.loads(r["aliases_json"]), "interview_count": occ.get(r["id"], 0)}
+               for r in rows]
+        if with_coverage:
+            from ..services import coverage_service
+
+            for it in out:
+                card = coverage_service._match_card(conn, it["text"], it["topic"])
+                it["card"] = ({"id": card["id"], "title": card["title"], "mastery": card["mastery"],
+                               "similarity": card["similarity"]} if card else None)
+        return out
     except Exception:
         raise HTTPException(400, "查询失败")
     finally:

@@ -15,7 +15,8 @@ import json
 from ..core import embedder
 from ..core.db import get_conn
 
-SIM_MIN = 0.60          # 题目↔卡片匹配的余弦下限（实测 bge-small 中文噪声相似度可达 ~0.53，0.50 会把 Spark shuffle 误配到 Redis 卡）
+SIM_MIN = 0.75          # 同主题匹配下限：实测同主题真实覆盖落在 0.83~0.99
+CROSS_TOPIC_MIN = 0.85  # 跨主题匹配下限：更高，防止"都聊技术"的伪相似
 WEAK_MASTERY = 1.5      # 有卡但低于此值视为"有卡但弱"
 BAND_SCORE = {"high": 8, "mid": 5, "low": 2}
 
@@ -24,20 +25,31 @@ def _now() -> str:
     return datetime.datetime.now().isoformat(timespec="seconds")
 
 
-def _match_card(conn, text: str) -> dict | None:
-    """题目 ↔ 知识卡匹配：语义相似度达阈值即认为有覆盖。"""
+def _match_card(conn, text: str, topic: str | None = None) -> dict | None:
+    """题目 ↔ 知识卡匹配：同主题靠 0.75 阈值，跨主题必须 0.85 近同句。
+
+    阈值来自实测分布（6 张卡 × 55 题）：同主题真实覆盖 0.83~0.99；
+    跨主题噪声集中在 0.50~0.68（如"Agent 死循环"↔"Flink 反压"0.61），
+    单靠余弦会把它们全判成"有卡"，进而把最关键的缺口信号吃掉。
+    """
     if not embedder.available():
         return None
     try:
         hits = embedder.search_similar(text, "card", top_k=1)
     except Exception:
         return None
-    if not hits or hits[0][1] < SIM_MIN:
+    if not hits:
         return None
     row = conn.execute(
         "SELECT id, title, topic, mastery, question FROM kb_cards WHERE id=? AND status='active'",
         (hits[0][0],)).fetchone()
-    return dict(row) | {"similarity": round(hits[0][1], 3)} if row else None
+    if not row:
+        return None
+    sim = hits[0][1]
+    need = SIM_MIN if (topic and row["topic"] and topic == row["topic"]) else CROSS_TOPIC_MIN
+    if sim < need:
+        return None
+    return dict(row) | {"similarity": round(sim, 3)}
 
 
 def _predict(card: dict | None) -> tuple[str, str | None]:
@@ -66,7 +78,7 @@ def analyze_interview(interview_id: str) -> dict:
 
         items, gaps = [], []
         for q in questions:
-            card = _match_card(conn, q["text"])
+            card = _match_card(conn, q["text"], q["topic"])
             pred, gap = _predict(card)
             mistake_n = conn.execute(
                 "SELECT COUNT(*) AS n FROM mistakes WHERE question_id=? AND resolved=0",
@@ -156,7 +168,7 @@ def evolution_report() -> dict:
     conn = get_conn()
     try:
         for q in questions:
-            card = _match_card(conn, q["text"])
+            card = _match_card(conn, q["text"], q["topic"])
             rec = {"qid": q["id"], "text": q["text"], "topic": q["topic"],
                    "freq": q["freq_count"], "card_id": card["id"] if card else None}
             (matched if card else uncarded).append(rec)

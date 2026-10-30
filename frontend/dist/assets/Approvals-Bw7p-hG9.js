@@ -1,1 +1,0 @@
-import{P as a}from"./Placeholder-JgrcxtsN.js";import{a as r,g as e}from"./index-DZrOf8MX.js";const n={__name:"Approvals",setup(o){return(t,c)=>(r(),e(a,{url:"/api/agent/actions"}))}};export{n as default};
