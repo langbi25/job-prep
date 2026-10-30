@@ -24,6 +24,22 @@ def draft_cards(req: CardDraftReq):
         raise HTTPException(400, str(e))
 
 
+class CardFillReq(BaseModel):
+    card_ids: list[str] = Field(default_factory=list)   # 空 = 自动挑要点为空的卡
+    limit: int = 3
+
+
+@router.post("/cards/fill")
+def fill_cards(req: CardFillReq):
+    """为空壳卡（有卡无要点）起草正文，产出待审批 fill_card 动作。"""
+    try:
+        return multi_agent.draft_card_content(req.card_ids, limit=max(1, min(req.limit, 10)))
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.post("/remediation/{session_id}/draft")
 def draft(session_id: str):
     """教练 Agent 起草补救动作（不落库，等人审）。"""

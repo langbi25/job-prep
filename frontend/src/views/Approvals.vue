@@ -66,7 +66,10 @@
           <el-descriptions-item label="理由">{{ current.reason || '—' }}</el-descriptions-item>
         </el-descriptions>
 
-        <template v-if="current.kind === 'create_card' && current.payload">
+        <template v-if="['create_card','fill_card'].includes(current.kind) && current.payload">
+          <el-alert v-if="current.kind === 'fill_card'" type="warning" :closable="false" show-icon
+                    style="margin-bottom: 10px"
+                    :title="`补正文：卡片 ${current.payload.card_id} 当前要点为空（假覆盖）`" />
           <h4>{{ current.payload.title }}</h4>
           <p class="meta">
             领域 {{ current.payload.domain }} / 主题 {{ current.payload.topic }}
@@ -120,8 +123,8 @@ const selected = ref([])
 const drawer = ref(false)
 const current = ref(null)
 
-const kindType = (k) => ({ create_card: 'primary', boost_srs: 'warning', merge_card: 'info', archive_card: 'danger' }[k] || 'info')
-const kindText = (k) => ({ create_card: '建卡', boost_srs: '提前复习', merge_card: '合并卡片', archive_card: '归档卡片' }[k] || k)
+const kindType = (k) => ({ create_card: 'primary', fill_card: 'success', boost_srs: 'warning', merge_card: 'info', archive_card: 'danger' }[k] || 'info')
+const kindText = (k) => ({ create_card: '建卡', fill_card: '补卡正文', boost_srs: '提前复习', merge_card: '合并卡片', archive_card: '归档卡片' }[k] || k)
 const statusType = (s) => ({ pending: 'warning', approved: 'success', rejected: 'info', failed: 'danger' }[s] || 'info')
 const statusText = (s) => ({ pending: '待审批', approved: '已批准', rejected: '已驳回', failed: '执行失败' }[s] || s)
 

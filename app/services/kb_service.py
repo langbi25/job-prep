@@ -130,6 +130,43 @@ def _index_card(card: dict) -> None:
         pass
 
 
+def update_card_content(card_id: str, points: list[str], pitfalls: list[str] | None = None,
+                        tags: list[str] | None = None) -> dict:
+    """补/改卡片正文（要点、坑点、标签），同步改 md 与向量索引。
+
+    专给"空壳卡"用：卡片存在、覆盖统计算它有卡，但 points 为空——
+    这种卡比无卡更危险（让人以为会了），所以要么补内容，要么归档，不能留着。
+    改完必须重写 md（事实源）并重建向量，否则 Agent 读到的还是旧文本。
+    """
+    if not points:
+        raise ValueError("要点不能为空")
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT * FROM kb_cards WHERE id=?", (card_id,)).fetchone()
+        if not row:
+            raise ValueError(f"卡片不存在: {card_id}")
+        card = dict(row)
+        old_n = len(json.loads(card["points_json"] or "[]"))
+        card["points_json"] = json.dumps(points, ensure_ascii=False)
+        if pitfalls is not None:
+            card["pitfalls_json"] = json.dumps(pitfalls, ensure_ascii=False)
+        if tags:
+            card["tags_json"] = json.dumps(tags, ensure_ascii=False)
+        card["updated_at"] = now()
+        conn.execute(
+            "UPDATE kb_cards SET points_json=?, pitfalls_json=?, tags_json=?, updated_at=? WHERE id=?",
+            (card["points_json"], card["pitfalls_json"], card["tags_json"], card["updated_at"], card_id))
+        conn.commit()
+        path = config.KB_DIR / card["file_path"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(card_to_md(card), encoding="utf-8")
+        _index_card(card)  # 正文变了，向量必须跟着变，否则 Agent 仍读到旧内容
+        return {"card_id": card_id, "old_points": old_n, "new_points": len(points),
+                "file_path": card["file_path"]}
+    finally:
+        conn.close()
+
+
 def link_related(card_id: str, other_id: str) -> bool:
     """双向关联两张卡（原卡 ↔ 实战卡）。related 同时写库与 md frontmatter。
 

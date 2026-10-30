@@ -172,6 +172,97 @@ def draft_cards(question_ids: list[str] | None = None, limit: int = 3,
     return {"drafted": created, "failed": failed, "inserted": len(created)}
 
 
+def draft_card_content(card_ids: list[str] | None = None, limit: int = 3) -> dict:
+    """给"空壳卡"补正文（LLM 起草 → pending fill_card → 人工审批后写入）。
+
+    为什么要单独一条路径：这些卡已经存在（覆盖统计算"有卡"），但 points 为空——
+    它们是**假覆盖**。不能用 create_card 重来（会丢 mastery/related/卡片 id），
+    只能原地补内容，所以动作类型是 fill_card 且 decide 时走 update_card_content。
+    """
+    from ..core import llm, prompts
+
+    conn = get_conn()
+    try:
+        if card_ids:
+            marks = ",".join("?" * len(card_ids))
+            rows = conn.execute(
+                f"SELECT * FROM kb_cards WHERE id IN ({marks}) AND status='active'",
+                card_ids).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM kb_cards WHERE status='active' AND (points_json='[]' OR points_json IS NULL) "
+                "ORDER BY updated_at ASC LIMIT ?", (limit,)).fetchall()
+        if not rows:
+            return {"drafted": [], "skipped": "没有空壳卡（所有卡片都有要点）"}
+
+        pending_ids = set()
+        for a in conn.execute("SELECT payload_json FROM agent_actions WHERE kind='fill_card' AND status='pending'"):
+            try:
+                cid = json.loads(a["payload_json"]).get("card_id")
+            except Exception:  # noqa: BLE001
+                cid = None
+            if cid:
+                pending_ids.add(cid)
+
+        todo = [c for c in rows if c["id"] not in pending_ids][:limit]
+        if not todo:
+            return {"drafted": [], "skipped": "空壳卡都已有 pending 草稿（去审批中心处理）"}
+
+        others = conn.execute(
+            "SELECT title, topic FROM kb_cards WHERE status='active' AND id NOT IN "
+            f"({','.join('?' * len(todo))}) ORDER BY updated_at DESC LIMIT 40",
+            [c["id"] for c in todo]).fetchall()
+        existing = "\n".join(f"- {c['title']}（{c['topic']}）" for c in others) or "（知识库为空）"
+    finally:
+        conn.close()
+
+    created, failed = [], []
+    for card in todo:
+        question = card["question"] or card["title"]
+        try:
+            system, user, version = prompts.render(
+                "card_draft", question=question, qtype="项目/场景题" if card["domain"] == "project" else "未标注",
+                topic=card["topic"] or "未标注", freq=1, existing=existing)
+            data = llm.chat_parsed(system, user)
+        except Exception as e:  # noqa: BLE001
+            failed.append({"card_id": card["id"], "error": str(e)[:200]})
+            continue
+
+        points = [str(p).strip() for p in (data.get("points") or []) if str(p).strip()]
+        points = [p for p in points if len(p) >= 8]
+        pitfalls = [str(p).strip() for p in (data.get("pitfalls") or []) if str(p).strip()]
+        if len(points) < 3:
+            failed.append({"card_id": card["id"], "error": f"要点不足（{len(points)} 条）"})
+            continue
+
+        payload = {
+            "card_id": card["id"],
+            "title": card["title"],
+            "domain": card["domain"],
+            "topic": card["topic"],
+            "question": question,
+            "points": points[:9],
+            "pitfalls": pitfalls[:4],
+            "tags": [str(t)[:20] for t in (data.get("tags") or [])][:6],
+            "prompt_version": version,
+        }
+        aid = _new_action_id()
+        conn = get_conn()
+        try:
+            conn.execute(
+                "INSERT INTO agent_actions (id,run_id,session_id,kind,payload_json,reason,status,created_at) "
+                "VALUES (?,?,?,?,?,?,'pending',?)",
+                (aid, None, None, "fill_card", json.dumps(payload, ensure_ascii=False),
+                 (data.get("reason") or f"补空壳卡正文 {card['id']}")[:300], _now()))
+            conn.commit()
+        finally:
+            conn.close()
+        created.append({"action_id": aid, "card_id": card["id"], "title": card["title"],
+                        "points": len(points), "topic": card["topic"]})
+
+    return {"drafted": created, "failed": failed, "inserted": len(created)}
+
+
 def list_actions(status: str | None = "pending") -> list[dict]:
     conn = get_conn()
     try:
@@ -272,6 +363,14 @@ def decide(action_id: str, approve: bool) -> dict:
                             result["linked_to"] = link
                     except Exception as e:  # noqa: BLE001
                         result["link_error"] = str(e)[:120]
+            elif row["kind"] == "fill_card":
+                # 空壳卡补正文：原地更新，保住卡片 id / mastery / related
+                result = kb_service.update_card_content(
+                    payload["card_id"],
+                    payload.get("points") or [],
+                    payload.get("pitfalls"),
+                    payload.get("tags") or None,
+                )
             elif row["kind"] == "boost_srs":
                 cid = payload.get("card_id")
                 cur = conn.execute("UPDATE kb_cards SET srs_due=? WHERE id=?",

@@ -3,6 +3,9 @@
     <div class="page-header">
       <h2>知识库 · {{ rows.length }} 张卡</h2>
       <div>
+        <el-button v-if="hollowCount" type="warning" plain :loading="filling" @click="fillHollow">
+          AI 补空壳卡（{{ hollowCount }}）
+        </el-button>
         <el-button type="primary" :icon="Plus" @click="openCreate()">新建卡片</el-button>
         <el-button :icon="Refresh" circle @click="load" />
       </div>
@@ -29,7 +32,10 @@
       <el-table-column prop="domain" label="领域" width="90" />
       <el-table-column prop="topic" label="主题" width="130" show-overflow-tooltip />
       <el-table-column label="要点" width="70" align="center">
-        <template #default="{ row }">{{ row.points?.length || 0 }}</template>
+        <template #default="{ row }">
+          <el-tag v-if="!row.points?.length" size="small" type="danger" effect="plain">空壳</el-tag>
+          <span v-else>{{ row.points.length }}</span>
+        </template>
       </el-table-column>
       <el-table-column label="掌握度" width="100" align="center">
         <template #default="{ row }">
@@ -99,13 +105,14 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { Plus, Refresh, Search } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 
 const rows = ref([])
 const loading = ref(false)
+const filling = ref(false)
 const filters = ref({ q: '', domain: '' })
 const drawer = ref(false)
 const current = ref(null)
@@ -114,6 +121,9 @@ const saving = ref(false)
 const form = ref({ title: '', domain: 'backend', topic: '' })
 const pointsText = ref('')
 const pitfallsText = ref('')
+
+// 空壳卡 = 有卡无要点：覆盖率算它有卡，但复习/评分/Agent 都读不到内容
+const hollowCount = computed(() => rows.value.filter((r) => !r.points?.length).length)
 
 async function load() {
   loading.value = true
@@ -146,6 +156,22 @@ async function save() {
     dialog.value = false
     load()
   } finally { saving.value = false }
+}
+
+async function fillHollow() {
+  filling.value = true
+  try {
+    const res = await api.post('/api/agent/cards/fill', { limit: Math.min(hollowCount.value, 5) })
+    if (!res.drafted?.length) {
+      ElMessage.warning(res.skipped || res.failed?.[0]?.error || '没有生成草稿')
+      return
+    }
+    ElMessageBox.confirm(
+      `已为空壳卡起草 ${res.drafted.length} 份正文：${res.drafted.map((d) => d.card_id).join('、')}。` +
+      '现在去审批中心逐条确认？',
+      'AI 补卡正文', { confirmButtonText: '去审批', cancelButtonText: '稍后' }
+    ).then(() => window.location.hash = '#/approvals').catch(() => {})
+  } finally { filling.value = false }
 }
 
 onMounted(load)
