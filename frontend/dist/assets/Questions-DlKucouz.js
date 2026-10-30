@@ -1,0 +1,1 @@
+import{P as e}from"./Placeholder-JgrcxtsN.js";import{a as o,g as r}from"./index-DZrOf8MX.js";const n={__name:"Questions",setup(t){return(a,s)=>(o(),r(e,{url:"/api/questions?limit=100"}))}};export{n as default};

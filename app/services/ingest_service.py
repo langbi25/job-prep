@@ -113,14 +113,27 @@ def _find_similar(conn: sqlite3.Connection, text: str) -> str | None:
 
 
 def _next_question_id(conn: sqlite3.Connection) -> str:
-    row = conn.execute("SELECT COUNT(*) AS n FROM question_pool").fetchone()
-    return f"q-{row['n'] + 1:04d}"
+    """按现有最大编号 +1。不能用 COUNT(*)+1：删过题之后会撞已有主键。"""
+    ids = [r["id"] for r in conn.execute("SELECT id FROM question_pool WHERE id LIKE 'q-%'")]
+    mx = 0
+    for i in ids:
+        try:
+            mx = max(mx, int(i.split("-")[1]))
+        except (IndexError, ValueError):
+            continue
+    return f"q-{mx + 1:04d}"
 
 
 def _next_interview_id(conn: sqlite3.Connection) -> str:
     ym = f"fi-{datetime.datetime.now():%Y%m}"
-    row = conn.execute("SELECT COUNT(*) AS n FROM feed_interviews WHERE id LIKE ?", (ym + "%",)).fetchone()
-    return f"{ym}-{row['n'] + 1:04d}"
+    ids = [r["id"] for r in conn.execute("SELECT id FROM feed_interviews WHERE id LIKE ?", (ym + "%",))]
+    mx = 0
+    for i in ids:
+        try:
+            mx = max(mx, int(i.rsplit("-", 1)[1]))
+        except (IndexError, ValueError):
+            continue
+    return f"{ym}-{mx + 1:04d}"
 
 
 def confirm_ingest(ingest_id: str, payload: dict) -> dict:
@@ -136,6 +149,18 @@ def confirm_ingest(ingest_id: str, payload: dict) -> dict:
         fi_id = _next_interview_id(conn)
         raw_rel = str(row["raw_path"]).replace("pending", "archived")
         iv_rel = f"{datetime.datetime.now():%Y}/{fi_id}.md"
+
+        # 兜底：确认表单可以只传增量修改，未传的字段/题目一律回落到抽取结果。
+        # （曾经因为客户端只 POST {} 就确认，导致面经入库但 0 道题——空壳面经）
+        ej = json.loads(row["extracted_json"]) if row["extracted_json"] else {}
+        if not payload.get("questions"):
+            payload = payload | {"questions": ej.get("questions") or []}
+        for k in ("company", "position", "round", "interview_date"):
+            if not payload.get(k) and ej.get(k):
+                payload[k] = ej[k]
+        if not payload.get("direction"):
+            payload["direction"] = ej.get("direction") or "bigdata"
+
         kept = [q for q in payload["questions"] if q.get("keep", True)]
 
         conn.execute(
@@ -153,27 +178,36 @@ def confirm_ingest(ingest_id: str, payload: dict) -> dict:
             if not text:
                 continue
             qid = q.get("merge_into") or _find_similar(conn, text)
+            # 候选必须真实存在且未被归并，否则当作新题（防悬空 qid 被 INSERT OR IGNORE 吞掉）
+            if qid and not conn.execute(
+                "SELECT 1 FROM question_pool WHERE id=? AND merged_into IS NULL", (qid,)
+            ).fetchone():
+                qid = None
+            # 同一场面试里同一题号只能出现一次：说明这两条其实是不同题，落新题而不是静默丢弃
+            if qid and conn.execute(
+                "SELECT 1 FROM question_occurrences WHERE question_id=? AND interview_id=?", (qid, fi_id)
+            ).fetchone():
+                qid = None
             if qid:
-                dup = conn.execute("SELECT id, freq_count FROM question_pool WHERE id=?", (qid,)).fetchone()
-                if dup:
-                    conn.execute(
-                        "UPDATE question_pool SET freq_count=freq_count+1, last_seen_at=? WHERE id=?",
-                        (today_s, qid),
-                    )
-                    aliases = json.loads(conn.execute("SELECT aliases_json FROM question_pool WHERE id=?", (qid,)).fetchone()["aliases_json"])
-                    if text not in aliases:
-                        aliases.append(text)
-                        conn.execute("UPDATE question_pool SET aliases_json=? WHERE id=?", (json.dumps(aliases, ensure_ascii=False), qid))
+                conn.execute(
+                    "UPDATE question_pool SET freq_count=freq_count+1, last_seen_at=? WHERE id=?",
+                    (today_s, qid),
+                )
+                aliases = json.loads(conn.execute("SELECT aliases_json FROM question_pool WHERE id=?", (qid,)).fetchone()["aliases_json"])
+                if text not in aliases:
+                    aliases.append(text)
+                    conn.execute("UPDATE question_pool SET aliases_json=? WHERE id=?", (json.dumps(aliases, ensure_ascii=False), qid))
             else:
                 qid = _next_question_id(conn)
                 conn.execute(
                     "INSERT INTO question_pool (id,text,aliases_json,qtype,topic,freq_count,first_seen_at,last_seen_at) "
                     "VALUES (?,?,?,?,?,1,?,?)",
-                    (qid, text, json.dumps([], ensure_ascii=False), q.get("qtype"), q.get("topic"), today_s, today_s),
+                    (qid, text, json.dumps([], ensure_ascii=False), q.get("qtype"),
+                     q.get("topic") or q.get("topic_hint"), today_s, today_s),
                 )
                 # question_fts 由 questions_ai 触发器维护，不再手工插入索引
             conn.execute(
-                "INSERT OR IGNORE INTO question_occurrences (question_id,interview_id,raw_text,ask_order) VALUES (?,?,?,?)",
+                "INSERT INTO question_occurrences (question_id,interview_id,raw_text,ask_order) VALUES (?,?,?,?)",
                 (qid, fi_id, text, i),
             )
 

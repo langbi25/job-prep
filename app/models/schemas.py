@@ -42,11 +42,11 @@ class ConfirmedQuestion(BaseModel):
 class ConfirmPayload(BaseModel):
     company: str = ""
     position: str = ""
-    direction: str = "bigdata"
+    direction: str = ""          # 空 = 回落到抽取结果的 direction
     round: str = ""
     interview_date: str = ""
     result: str = "unknown"
-    questions: list[ConfirmedQuestion] = Field(default_factory=list)
+    questions: list[ConfirmedQuestion] = Field(default_factory=list)  # 空 = 回落到抽取结果的全部题目
 
 
 class MergePayload(BaseModel):

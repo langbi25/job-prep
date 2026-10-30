@@ -133,26 +133,56 @@ def hybrid_search(query: str, scope: str = "cards", top_k: int = 5) -> list[dict
     return ranked
 
 
-def find_similar_question(text: str, threshold: float = 0.88) -> str | None:
-    """题目查重：精确 → FTS → 向量语义（余弦阈值）。"""
+def _norm_text(s: str) -> str:
+    """归一化：去标点空白、转小写，只留中英文数字，用于判断"是否同一道题"。"""
+    return re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", s or "").lower()
+
+
+def _same_question(a: str, b: str, min_ratio: float = 0.9) -> bool:
+    """字面相似度判定（dedupe 用，比向量可信）。
+
+    中文 2-gram FTS 只能说明"有共同片段"，不能说明是同一题：
+    "多 Agent 协作任务怎么拆分" 与 "Memory 怎么做的" 共享 "怎么" 就算命中。
+    所以 FTS 仅用来**召回候选**，是否同一题由字符级相似度裁决。
+    """
+    import difflib
+
+    na, nb = _norm_text(a), _norm_text(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    return difflib.SequenceMatcher(None, na, nb).ratio() >= min_ratio
+
+
+def find_similar_question(text: str, threshold: float = 0.95, ensure_index: bool = False) -> str | None:
+    """题目查重：精确 → FTS 召回 + 字面裁决 → 向量语义（高阈值）。
+
+    ensure_index 默认 False：调用方可能正持有写事务（如 confirm_ingest），
+    此时重建索引会开第二个连接去写 embeddings，直接 SQLITE_BUSY 死锁。
+    建索引用启动时的 ensure_all_indexed() 或显式传 True 的只读调用方。
+    """
     conn = get_conn()
     try:
         row = conn.execute("SELECT id FROM question_pool WHERE text=?", (text,)).fetchone()
         if row:
             return row["id"]
         try:
-            row = conn.execute(
-                "SELECT p.id FROM question_fts f JOIN question_pool p ON p.rowid=f.rowid "
-                "WHERE question_fts MATCH ? ORDER BY bm25(question_fts) LIMIT 1",
-                (_fts_query(text),)).fetchone()
-            if row:
-                return row["id"]
+            cands = conn.execute(
+                "SELECT p.id, p.text FROM question_fts f JOIN question_pool p ON p.rowid=f.rowid "
+                "WHERE question_fts MATCH ? AND p.merged_into IS NULL ORDER BY bm25(question_fts) LIMIT 5",
+                (_fts_query(text),)).fetchall()
+            for c in cands:
+                if _same_question(text, c["text"]):
+                    return c["id"]
         except Exception:
             pass
     finally:
         conn.close()
+    # 换一种问法的同一题交给向量，但阈值必须高（bge-small 同领域长句余弦普遍 0.85+）
     if embedder.available():
-        ensure_all_indexed()
+        if ensure_index:
+            ensure_all_indexed()
         hits = embedder.search_similar(text, "question", top_k=1)
         if hits and hits[0][1] >= threshold:
             return hits[0][0]
