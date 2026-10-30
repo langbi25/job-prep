@@ -5,3 +5,6 @@ __pycache__/
 reports/
 .eval-artifacts/
 node_modules/
+
+# IDE
+.idea/
