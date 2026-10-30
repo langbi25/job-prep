@@ -1,8 +1,27 @@
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from ..services import multi_agent
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
+
+
+class CardDraftReq(BaseModel):
+    question_ids: list[str] = Field(default_factory=list)   # 空 = 自动挑高频无卡题
+    limit: int = 3
+    only_uncarded: bool = True
+
+
+@router.post("/cards/draft")
+def draft_cards(req: CardDraftReq):
+    """用 LLM 为题目起草知识卡，产出待审批动作（不直接写库）。"""
+    try:
+        return multi_agent.draft_cards(req.question_ids, limit=max(1, min(req.limit, 10)),
+                                       only_uncarded=req.only_uncarded)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.post("/remediation/{session_id}/draft")

@@ -72,6 +72,106 @@ def draft_remediation(session_id: str) -> dict:
     return {"session_id": session_id, "persona": persona, "actions": created}
 
 
+def draft_cards(question_ids: list[str] | None = None, limit: int = 3,
+                only_uncarded: bool = True) -> dict:
+    """为题目池里的题起草知识卡（LLM），产出 pending 的 create_card 动作，人工审批后落库。
+
+    设计要点：
+    - **不直接写卡片**：LLM 写的要点会进复习材料和评分参考答案，错一条就污染后续所有环节，
+      所以一律走 HITL——草稿进审批中心，人确认后才成为事实源；
+    - 同一道题已有 pending 草稿时跳过，避免重复烧 token；
+    - 校验 points 数量与长度，把"要注意性能"这类空话挡在门外。
+    """
+    from ..core import llm, prompts
+    from . import coverage_service
+
+    conn = get_conn()
+    try:
+        if question_ids:
+            marks = ",".join("?" * len(question_ids))
+            rows = conn.execute(
+                f"SELECT * FROM question_pool WHERE id IN ({marks}) AND merged_into IS NULL",
+                question_ids).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM question_pool WHERE merged_into IS NULL "
+                "ORDER BY freq_count DESC, last_seen_at DESC LIMIT 50").fetchall()
+        if not rows:
+            raise ValueError("题目不存在")
+
+        pending_qids = set()
+        for a in conn.execute("SELECT payload_json FROM agent_actions WHERE kind='create_card' AND status='pending'"):
+            try:
+                pid = json.loads(a["payload_json"]).get("question_id")
+            except Exception:  # noqa: BLE001
+                pid = None
+            if pid:
+                pending_qids.add(pid)
+
+        todo = []
+        for q in rows:
+            if q["id"] in pending_qids:
+                continue
+            if only_uncarded and coverage_service._match_card(conn, q["text"], q["topic"]):
+                continue
+            todo.append(q)
+            if len(todo) >= limit:
+                break
+        if not todo:
+            return {"drafted": [], "skipped": "没有待建卡的题（可能都已有卡或已有草稿）"}
+
+        card_rows = conn.execute(
+            "SELECT title, topic FROM kb_cards WHERE status='active' ORDER BY updated_at DESC LIMIT 40").fetchall()
+        existing = "\n".join(f"- {c['title']}（{c['topic']}）" for c in card_rows) or "（知识库为空）"
+    finally:
+        conn.close()
+
+    created, failed = [], []
+    for q in todo:
+        try:
+            system, user, version = prompts.render(
+                "card_draft", question=q["text"], qtype=q["qtype"] or "未标注",
+                topic=q["topic"] or "未标注", freq=q["freq_count"], existing=existing)
+            data = llm.chat_parsed(system, user)
+        except Exception as e:  # noqa: BLE001
+            failed.append({"question_id": q["id"], "error": str(e)[:200]})
+            continue
+
+        points = [str(p).strip() for p in (data.get("points") or []) if str(p).strip()]
+        points = [p for p in points if len(p) >= 8]          # 挡空话
+        pitfalls = [str(p).strip() for p in (data.get("pitfalls") or []) if str(p).strip()]
+        if len(points) < 3:
+            failed.append({"question_id": q["id"], "error": f"要点不足（{len(points)} 条）"})
+            continue
+
+        payload = {
+            "question_id": q["id"],
+            "title": (data.get("title") or q["text"])[:200],
+            "domain": data.get("domain") or "cs",
+            "topic": data.get("topic") or q["topic"] or "通用",
+            "question": q["text"],
+            "points": points[:9],
+            "pitfalls": pitfalls[:4],
+            "tags": [str(t)[:20] for t in (data.get("tags") or [])][:6],
+            "prompt_version": version,
+        }
+        aid = _new_action_id()
+        conn = get_conn()
+        try:
+            conn.execute(
+                "INSERT INTO agent_actions (id,run_id,session_id,kind,payload_json,reason,status,created_at) "
+                "VALUES (?,?,?,?,?,?,'pending',?)",
+                (aid, None, None, "create_card", json.dumps(payload, ensure_ascii=False),
+                 (data.get("reason") or f"补建高频无卡题 {q['id']}")[:300], _now()))
+            conn.commit()
+        finally:
+            conn.close()
+        created.append({"action_id": aid, "question_id": q["id"], "title": payload["title"],
+                        "points": len(points), "topic": payload["topic"]})
+
+    return {"drafted": created, "failed": failed, "inserted": len(created)}
+
+
 def list_actions(status: str | None = "pending") -> list[dict]:
     conn = get_conn()
     try:
@@ -159,7 +259,8 @@ def decide(action_id: str, approve: bool) -> dict:
                     "topic": payload.get("topic") or "通用",
                     "question": payload.get("question") or payload.get("title", ""),
                     "points": payload.get("points") or [],
-                    "tags": ["Agent建议"],
+                    "pitfalls": payload.get("pitfalls") or [],
+                    "tags": payload.get("tags") or ["Agent建议"],
                     "source_type": "agent",
                 })
                 result = {"card_id": card["id"]}

@@ -22,7 +22,16 @@
         </el-select>
         <el-checkbox v-model="onlyUncarded">只看无卡</el-checkbox>
         <el-checkbox v-model="onlyFreq">只看高频(≥2)</el-checkbox>
-        <span class="hint">无卡的题就是该建卡的地方 —— 行尾「建卡」直接写进知识库</span>
+        <el-divider direction="vertical" />
+        <el-select v-model="aiCount" style="width: 110px" size="small">
+          <el-option :value="1" label="AI 建 1 张" />
+          <el-option :value="3" label="AI 建 3 张" />
+          <el-option :value="5" label="AI 建 5 张" />
+        </el-select>
+        <el-button type="primary" size="small" :loading="aiBusy" @click="aiBatch">
+          补齐高频无卡题
+        </el-button>
+        <span class="hint">AI 只出草稿，去审批中心点头后才入库</span>
       </div>
     </el-card>
 
@@ -64,9 +73,10 @@
         </template>
       </el-table-column>
       <el-table-column prop="last_seen_at" label="最近出现" width="110" />
-      <el-table-column label="操作" width="80" fixed="right">
+      <el-table-column label="操作" width="150" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" text type="primary" @click.stop="openCreate(row)">建卡</el-button>
+          <el-button size="small" text type="primary" @click.stop="aiDraft(row)">AI 建卡</el-button>
+          <el-button size="small" text @click.stop="openCreate(row)">手写</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -105,7 +115,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Refresh, Search } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 
 const router = useRouter()
@@ -117,6 +127,8 @@ const filters = ref({ q: '', qtype: '', topic: '' })
 
 const dialog = ref(false)
 const saving = ref(false)
+const aiBusy = ref(false)
+const aiCount = ref(3)
 const form = ref({ title: '', domain: 'backend', topic: '', question: '' })
 const pointsText = ref('')
 const pitfallsText = ref('')
@@ -168,6 +180,36 @@ async function copy(text) {
     await navigator.clipboard.writeText(text)
     ElMessage.success('已复制')
   } catch { ElMessage.warning('复制失败，请手动选择') }
+}
+
+async function aiDraft(row) {
+  aiBusy.value = true
+  try {
+    const res = await api.post('/api/agent/cards/draft', { question_ids: [row.id], limit: 1 })
+    if (!res.drafted?.length) {
+      ElMessage.warning(res.skipped || res.failed?.[0]?.error || '没有生成草稿')
+      return
+    }
+    ElMessageBox.confirm(
+      `已生成草稿：${res.drafted[0].title}（${res.drafted[0].points} 条要点）。现在去审批中心确认？`,
+      'AI 建卡', { confirmButtonText: '去审批', cancelButtonText: '稍后' }
+    ).then(() => router.push('/approvals')).catch(() => {})
+  } finally { aiBusy.value = false }
+}
+
+async function aiBatch() {
+  aiBusy.value = true
+  try {
+    const res = await api.post('/api/agent/cards/draft', { limit: aiCount.value, only_uncarded: true })
+    if (!res.drafted?.length) {
+      ElMessage.warning(res.skipped || '没有可建卡的题')
+      return
+    }
+    const names = res.drafted.map((d) => d.title.slice(0, 24)).join('；')
+    ElMessageBox.confirm(`已生成 ${res.drafted.length} 张草稿：${names}。去审批中心逐条确认？`,
+      'AI 批量建卡', { confirmButtonText: '去审批', cancelButtonText: '稍后' })
+      .then(() => router.push('/approvals')).catch(() => {})
+  } finally { aiBusy.value = false }
 }
 
 onMounted(load)
