@@ -6,7 +6,7 @@ title: 工具链能否 Skill 化？
 mastery: 0
 srs_due: ""
 tags: ["Agent", "工具调用", "Skill化", "MCP", "工具链", "可复用能力"]
-related: []
+related: ["kb-cs-gen-001"]
 source: agent
 created: 2026-10-30
 updated: 2026-10-30

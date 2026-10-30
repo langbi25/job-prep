@@ -12,6 +12,7 @@
         <el-menu-item index="/mock"><el-icon><ChatDotRound /></el-icon>模拟面试</el-menu-item>
         <el-menu-item index="/review"><el-icon><AlarmClock /></el-icon>复习中心</el-menu-item>
         <el-menu-item index="/approvals"><el-icon><Checked /></el-icon>审批中心</el-menu-item>
+        <el-menu-item index="/plans"><el-icon><Tools /></el-icon>改造方案</el-menu-item>
         <el-menu-item index="/evolution"><el-icon><TrendCharts /></el-icon>进化报告</el-menu-item>
       </el-menu>
       <div class="backend-status">

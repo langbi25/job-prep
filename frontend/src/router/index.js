@@ -17,6 +17,7 @@ const routes = [
       { path: 'review', name: 'Review', component: () => import('../views/Review.vue'), meta: { title: '复习中心' } },
       { path: 'approvals', name: 'Approvals', component: () => import('../views/Approvals.vue'), meta: { title: '审批中心' } },
       { path: 'evolution', name: 'Evolution', component: () => import('../views/Evolution.vue'), meta: { title: '进化报告' } },
+      { path: 'plans', name: 'Plans', component: () => import('../views/Plans.vue'), meta: { title: '改造方案' } },
     ],
   },
 ]

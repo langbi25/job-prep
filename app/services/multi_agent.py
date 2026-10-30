@@ -264,6 +264,14 @@ def decide(action_id: str, approve: bool) -> dict:
                     "source_type": "agent",
                 })
                 result = {"card_id": card["id"]}
+                # 实战卡回灌：与原卡互链，让"通用答案"和"我真的做过"连起来
+                link = payload.get("link_card_id")
+                if link:
+                    try:
+                        if kb_service.link_related(card["id"], link):
+                            result["linked_to"] = link
+                    except Exception as e:  # noqa: BLE001
+                        result["link_error"] = str(e)[:120]
             elif row["kind"] == "boost_srs":
                 cid = payload.get("card_id")
                 cur = conn.execute("UPDATE kb_cards SET srs_due=? WHERE id=?",

@@ -78,7 +78,21 @@
             <h4>常见坑</h4>
             <ul class="pitfalls"><li v-for="(p, i) in current.payload.pitfalls" :key="i">{{ p }}</li></ul>
           </template>
-          <p class="meta">prompt 版本 v{{ current.payload.prompt_version || '?' }}｜来源题目 {{ current.payload.question_id || '—' }}</p>
+          <template v-if="current.payload.interview_narrative">
+            <h4>面试叙述（可直接背的版本）</h4>
+            <p class="narrative">{{ current.payload.interview_narrative }}</p>
+          </template>
+          <template v-if="current.payload.resume_bullets?.length">
+            <h4>简历 bullet</h4>
+            <ul><li v-for="(p, i) in current.payload.resume_bullets" :key="i">{{ p }}</li></ul>
+          </template>
+          <p class="meta">
+            prompt 版本 v{{ current.payload.prompt_version || '?' }}｜来源题目 {{ current.payload.question_id || '—' }}
+            <template v-if="current.payload.link_card_id">
+              ｜获批后与原子卡 <b>{{ current.payload.link_card_id }}</b> 互链
+            </template>
+            <template v-if="current.payload.plan_id">｜来自方案 {{ current.payload.plan_id }}</template>
+          </p>
         </template>
 
         <pre v-else class="raw">{{ JSON.stringify(current.payload, null, 2) }}</pre>
@@ -156,4 +170,6 @@ onMounted(load)
 .points { padding-left: 20px; line-height: 1.9; }
 .pitfalls { padding-left: 20px; line-height: 1.9; color: #e6a23c; }
 .raw { background: #f5f7fa; padding: 12px; border-radius: 6px; font-size: 12px; overflow: auto; }
+.narrative { background: #f5f7fa; padding: 10px 12px; border-radius: 6px; font-size: 13px; line-height: 1.8; white-space: pre-wrap; }
+h4 { margin: 16px 0 6px; font-size: 14px; }
 </style>

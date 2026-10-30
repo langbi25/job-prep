@@ -45,7 +45,11 @@
             <div style="margin-top: 8px">
               <el-button size="small" @click="copy(row.text)">复制题目</el-button>
               <el-button size="small" type="primary" @click="openCreate(row)">建卡</el-button>
+              <el-button size="small" type="warning" plain @click="toPlan(row)">生成改造方案</el-button>
               <el-button size="small" @click="router.push('/coverage')">去作战地图</el-button>
+            </div>
+            <div class="hint" style="margin-top: 6px">
+              改造方案 = 针对你当前项目的一次性落地计划：做完后回灌成实战卡，这张卡就有了"我真做过"的深度。
             </div>
           </div>
         </template>
@@ -73,10 +77,11 @@
         </template>
       </el-table-column>
       <el-table-column prop="last_seen_at" label="最近出现" width="110" />
-      <el-table-column label="操作" width="150" fixed="right">
+      <el-table-column label="操作" width="210" fixed="right">
         <template #default="{ row }">
           <el-button size="small" text type="primary" @click.stop="aiDraft(row)">AI 建卡</el-button>
           <el-button size="small" text @click.stop="openCreate(row)">手写</el-button>
+          <el-button size="small" text type="warning" @click.stop="toPlan(row)">改造方案</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -154,6 +159,10 @@ async function load() {
       },
     })
   } finally { loading.value = false }
+}
+
+function toPlan(row) {
+  router.push({ path: '/plans', query: { question_id: row.id } })
 }
 
 function openCreate(row) {

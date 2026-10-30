@@ -228,3 +228,17 @@ CREATE TABLE IF NOT EXISTS interview_outcomes (
   questions_json TEXT NOT NULL DEFAULT '[]',  -- [{text, self_band(0-10), matched_qid?}]
   created_at    TEXT NOT NULL
 );
+
+-- ============ 项目进化环（阶段 8）：题目 → 改造方案 → 实战复盘 ============
+CREATE TABLE IF NOT EXISTS improvement_plans (
+  id           TEXT PRIMARY KEY,
+  question_id  TEXT REFERENCES question_pool(id),
+  card_id      TEXT,                    -- 生成时命中的卡片（可为空）
+  status       TEXT NOT NULL DEFAULT 'pending',   -- pending / adopted / archived
+  payload_json TEXT NOT NULL,           -- 方案正文（goal/steps/acceptance/metrics/...）
+  doc_path     TEXT,                    -- 落盘的方案文档（docs/plans/xxx.md）
+  notes        TEXT,                    -- 实施笔记（回灌前的原始素材）
+  created_at   TEXT NOT NULL,
+  adopted_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_plans_status ON improvement_plans(status);

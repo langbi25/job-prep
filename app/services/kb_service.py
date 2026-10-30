@@ -106,7 +106,52 @@ def create_card(data: dict) -> dict:
         card["points"] = json.loads(card["points_json"])
         card["pitfalls"] = json.loads(card["pitfalls_json"])
         card["tags"] = json.loads(card["tags_json"])
+        _index_card(card)
         return card
+    finally:
+        conn.close()
+
+
+def _index_card(card: dict) -> None:
+    """新卡落地即建向量。
+
+    为什么不能等启动时的懒索引：飞轮的顺序是"建卡 → 立刻拿这张卡去起草改造方案"。
+    向量缺失时 _match_card 找不到它，方案会退化成 card_id=None 的裸计划，
+    实战经验回灌也就没有互链目标。这里补上，成本只是一次 embed。
+    """
+    from ..core import embedder
+
+    try:
+        embedder.ensure_indexed("card", [(
+            card["id"],
+            " ".join([card["title"], card.get("question") or "", card["points_json"]]),
+        )])
+    except Exception:  # 向量是增强项，失败不能阻断建卡
+        pass
+
+
+def link_related(card_id: str, other_id: str) -> bool:
+    """双向关联两张卡（原卡 ↔ 实战卡）。related 同时写库与 md frontmatter。
+
+    related 是"深度"的载体：原子卡是通用答案，实战卡是"我真的做过"，
+    两张卡互链后，复习原子卡时能看到自己的实战，检索也能顺带召回。
+    """
+    conn = get_conn()
+    try:
+        ok = False
+        for a, b in ((card_id, other_id), (other_id, card_id)):
+            row = conn.execute("SELECT related_json, file_path FROM kb_cards WHERE id=?", (a,)).fetchone()
+            if not row:
+                continue
+            rel = json.loads(row["related_json"] or "[]")
+            if b not in rel:
+                rel.append(b)
+                conn.execute("UPDATE kb_cards SET related_json=?, updated_at=? WHERE id=?",
+                             (json.dumps(rel, ensure_ascii=False), now(), a))
+                update_md_meta(row["file_path"], {"related": json.dumps(rel, ensure_ascii=False)})
+            ok = True
+        conn.commit()
+        return ok
     finally:
         conn.close()
 

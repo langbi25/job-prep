@@ -11,6 +11,7 @@
 """
 import datetime
 import json
+import re
 
 from ..core import embedder
 from ..core.db import get_conn
@@ -23,6 +24,15 @@ BAND_SCORE = {"high": 8, "mid": 5, "low": 2}
 
 def _now() -> str:
     return datetime.datetime.now().isoformat(timespec="seconds")
+
+
+def _norm_topic(s: str | None) -> str:
+    """主题归一化：去掉空格/标点/大小写差异。
+
+    "工具链Skill化" 与 "工具链 Skill 化" 是同一个主题，直接 == 会判成跨主题，
+    把同主题匹配下限 0.75 抬到 0.85，刚好把 0.82 的真实覆盖挡在门外。
+    """
+    return re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", s or "").lower()
 
 
 def _match_card(conn, text: str, topic: str | None = None) -> dict | None:
@@ -46,7 +56,8 @@ def _match_card(conn, text: str, topic: str | None = None) -> dict | None:
     if not row:
         return None
     sim = hits[0][1]
-    need = SIM_MIN if (topic and row["topic"] and topic == row["topic"]) else CROSS_TOPIC_MIN
+    same_topic = bool(topic) and _norm_topic(topic) == _norm_topic(row["topic"])
+    need = SIM_MIN if same_topic else CROSS_TOPIC_MIN
     if sim < need:
         return None
     return dict(row) | {"similarity": round(sim, 3)}
