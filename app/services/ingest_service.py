@@ -124,6 +124,25 @@ def _next_question_id(conn: sqlite3.Connection) -> str:
     return f"q-{mx + 1:04d}"
 
 
+def _split_points(answer: str) -> list[str]:
+    """把抽取到的答案正文拆成要点列表。模型可能给 "- xxx" 多行，也可能给一整段。"""
+    pts = []
+    for line in (answer or "").splitlines():
+        s = re.sub(r"^\s*[-*·]\s*", "", line).strip()
+        if s:
+            pts.append(s)
+    return pts
+
+
+def _load_list(raw) -> list:
+    """读 json 数组字段，脏数据一律当空数组（历史库里有手改过的行）。"""
+    try:
+        v = json.loads(raw) if raw else []
+        return v if isinstance(v, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
 def _next_interview_id(conn: sqlite3.Connection) -> str:
     ym = f"fi-{datetime.datetime.now():%Y%m}"
     ids = [r["id"] for r in conn.execute("SELECT id FROM feed_interviews WHERE id LIKE ?", (ym + "%",))]
@@ -163,6 +182,23 @@ def confirm_ingest(ingest_id: str, payload: dict) -> dict:
 
         kept = [q for q in payload["questions"] if q.get("keep", True)]
 
+        # 答案三态只认服务端抽取结果：客户端只决定"留不留这道题、要不要建卡"。
+        # 不允许把答案正文回传进来——answer_points 会被 context_builder 塞进模拟面试的
+        # 评分上下文，确认页若能写答案，它就成了评分基准的注入口。
+        ej_qs = [x for x in (ej.get("questions") or []) if isinstance(x, dict)]
+        ej_by_text = {(x.get("text") or "").strip(): x for x in ej_qs}
+        for q in kept:
+            src = ej_by_text.get((q.get("text") or "").strip())
+            if not src:
+                continue
+            q["answer"] = src.get("answer")
+            q["answer_completeness"] = src.get("answer_completeness") or "none"
+            q["answer_gaps"] = src.get("answer_gaps") or []
+            if q.get("build_card") is None:
+                # 留用的题默认都建卡：没有卡的题在覆盖统计里就是缺口，哪怕它有答案。
+                # 有无答案不决定"建不建"，只决定走哪条 prompt（原文规范化 / 模型起草）。
+                q["build_card"] = True
+
         conn.execute(
             "INSERT INTO feed_interviews (id,ingest_id,company,position,direction,round,interview_date,"
             "result,source_type,source_url,raw_path,question_count,created_at) "
@@ -173,10 +209,15 @@ def confirm_ingest(ingest_id: str, payload: dict) -> dict:
         )
 
         today_s = today()
+        answers_saved = 0
+        draft_qids: list[str] = []
         for i, q in enumerate(kept, 1):
             text = (q.get("text") or "").strip()
             if not text:
                 continue
+            pts = _split_points(q.get("answer") or "")
+            comp = q.get("answer_completeness") or "none"
+            gaps = json.dumps(q.get("answer_gaps") or [], ensure_ascii=False)
             qid = q.get("merge_into") or _find_similar(conn, text)
             # 候选必须真实存在且未被归并，否则当作新题（防悬空 qid 被 INSERT OR IGNORE 吞掉）
             if qid and not conn.execute(
@@ -193,6 +234,17 @@ def confirm_ingest(ingest_id: str, payload: dict) -> dict:
                     "UPDATE question_pool SET freq_count=freq_count+1, last_seen_at=? WHERE id=?",
                     (today_s, qid),
                 )
+                # 老题第一次带上答案时补写（不覆盖已有答案：先入库的更接近原始面经）
+                cur = conn.execute(
+                    "SELECT answer_points_json, answer_completeness FROM question_pool WHERE id=?", (qid,)
+                ).fetchone()
+                if pts and not _load_list(cur["answer_points_json"]):
+                    conn.execute(
+                        "UPDATE question_pool SET answer_points_json=?, answer_completeness=?, "
+                        "answer_gaps_json=? WHERE id=?",
+                        (json.dumps(pts, ensure_ascii=False), comp, gaps, qid),
+                    )
+                    answers_saved += 1
                 aliases = json.loads(conn.execute("SELECT aliases_json FROM question_pool WHERE id=?", (qid,)).fetchone()["aliases_json"])
                 if text not in aliases:
                     aliases.append(text)
@@ -200,23 +252,34 @@ def confirm_ingest(ingest_id: str, payload: dict) -> dict:
             else:
                 qid = _next_question_id(conn)
                 conn.execute(
-                    "INSERT INTO question_pool (id,text,aliases_json,qtype,topic,freq_count,first_seen_at,last_seen_at) "
-                    "VALUES (?,?,?,?,?,1,?,?)",
+                    "INSERT INTO question_pool (id,text,aliases_json,qtype,topic,freq_count,first_seen_at,"
+                    "last_seen_at,answer_points_json,answer_completeness,answer_gaps_json) "
+                    "VALUES (?,?,?,?,?,1,?,?,?,?,?)",
                     (qid, text, json.dumps([], ensure_ascii=False), q.get("qtype"),
-                     q.get("topic") or q.get("topic_hint"), today_s, today_s),
+                     q.get("topic") or q.get("topic_hint"), today_s, today_s,
+                     json.dumps(pts, ensure_ascii=False), comp, gaps),
                 )
+                if pts:
+                    answers_saved += 1
                 # question_fts 由 questions_ai 触发器维护，不再手工插入索引
             conn.execute(
                 "INSERT INTO question_occurrences (question_id,interview_id,raw_text,ask_order) VALUES (?,?,?,?)",
                 (qid, fi_id, text, i),
             )
+            # 提取阶段就判过"该不该建卡"：单纯题目 / 答案不完整 → 确认后自动起草
+            if q.get("build_card") and qid not in draft_qids:
+                draft_qids.append(qid)
 
         # 面经原文归档（保真 + 补写抽取结果）
         raw_abs = config.INBOX_DIR / row["raw_path"]
         iv_abs = config.IV_DIR / iv_rel
         iv_abs.parent.mkdir(parents=True, exist_ok=True)
         raw_text = raw_abs.read_text(encoding="utf-8")
-        qlines = "\n".join(f"{i}. [{q.get('qtype', '')}|{q.get('topic', '')}] {q.get('text', '')}" for i, q in enumerate(kept, 1))
+        _comp_mark = {"none": "仅题目", "partial": "答案不完整", "complete": "答案完整"}
+        qlines = "\n".join(
+            f"{i}. [{q.get('qtype', '')}|{q.get('topic', '')}|"
+            f"{_comp_mark.get(q.get('answer_completeness') or 'none', '')}] {q.get('text', '')}"
+            for i, q in enumerate(kept, 1))
         iv_abs.write_text(raw_text + f"\n\n## 抽取的题目（共 {len(kept)} 道）\n\n{qlines}\n", encoding="utf-8")
 
         archived_abs = config.INBOX_DIR / raw_rel
@@ -227,7 +290,8 @@ def confirm_ingest(ingest_id: str, payload: dict) -> dict:
             "UPDATE ingests SET status='confirmed', confirmed_at=? WHERE id=?", (_now(), ingest_id)
         )
         conn.commit()
-        return {"interview_id": fi_id, "questions_kept": len(kept)}
+        return {"interview_id": fi_id, "questions_kept": len(kept),
+                "answers_saved": answers_saved, "draft_question_ids": draft_qids}
     finally:
         conn.close()
 

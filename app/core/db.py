@@ -56,6 +56,15 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     if "merged_into" not in cols:
         conn.execute("ALTER TABLE kb_cards ADD COLUMN merged_into TEXT REFERENCES kb_cards(id)")
 
+    # 题目池的"答案三态"：由面经抽取阶段判定，决定建卡走原文规范化还是 LLM 起草。
+    # 存下来而不是只留在 extracted_json 里，是因为卡建完、面经归档后还要能回溯
+    # "这张卡的参考答案是原文来的还是模型编的"。
+    qcols = {r["name"] for r in conn.execute("PRAGMA table_info(question_pool)")}
+    if "answer_completeness" not in qcols:
+        conn.execute("ALTER TABLE question_pool ADD COLUMN answer_completeness TEXT")
+    if "answer_gaps_json" not in qcols:
+        conn.execute("ALTER TABLE question_pool ADD COLUMN answer_gaps_json TEXT DEFAULT '[]'")
+
 
 def init_db():
     """执行 schema.sql 建库建表（幂等），并保证两套全文索引与内容表一致。"""

@@ -85,12 +85,98 @@ def chat_parsed(system: str, user: str, **kw) -> dict:
 
 # ============ 面经采集（阶段 1） ============
 
+_COMPLETENESS = ("none", "partial", "complete")
+_DOC_TYPES = ("interview", "single_question", "answer_snippet")
+
+
+def _as_text(v) -> str:
+    """答案字段可能是 str / list / dict，统一成一段可直接写库的纯文本。"""
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v.strip()
+    if isinstance(v, (list, tuple)):
+        return "\n".join(f"- {str(x).strip()}" for x in v if str(x).strip())
+    if isinstance(v, dict):
+        return "；".join(f"{k}：{x}" for k, x in v.items() if str(x).strip())
+    return str(v).strip()
+
+
 def extract_interview(raw_text: str, source_url: str = "") -> dict:
+    """抽取 + 判定（doc_type / 有无答案 / 答案完整度）。
+
+    **为什么判定必须在这里做**：它决定后面走哪条路——答案完整 → 用原文规范化成卡
+    （低风险，仍走审批但可批量通过）；没有答案 → LLM 从零起草（必须逐条人审）。
+    判定错 = 数据流向错，所以下面逐项校正，不信任模型自报：
+      - doc_type 用题目条数硬校正（两道以上不可能是"单题摘录"）；
+      - has_answer 由 answer_completeness 派生，不单独采信；
+      - 声称有答案但 answer 抽不出来 → 降级 none（没有正文就不算有答案）；
+      - 有正文却被判 none → 升到 partial（有证据就留，交人审，不静默丢内容）；
+      - 自称 complete 却列出了 gaps → 自相矛盾，降级 partial；
+      - 非面经材料里公司/轮次若在原文中找不到字面依据 → 清空（防幻觉）。
+    """
     system, user, version = prompts.render(
         "extract_interview", source_url=source_url or "未知", raw_text=raw_text[:12000])
     data = chat_parsed(system, user)
-    if not isinstance(data.get("questions"), list):
-        data["questions"] = []
+
+    raw_qs = data.get("questions")
+    if not isinstance(raw_qs, list):
+        raw_qs = []
+    questions = []
+    for q in raw_qs:
+        if not isinstance(q, dict):
+            continue
+        text = _as_text(q.get("text"))
+        if not text:
+            continue
+        answer = _as_text(q.get("answer"))
+        comp = str(q.get("answer_completeness") or "").strip().lower()
+        if comp not in _COMPLETENESS:
+            comp = "partial" if answer else "none"
+        if not answer:
+            comp = "none"
+        elif comp == "none":
+            comp = "partial"
+        gaps = q.get("answer_gaps")
+        gaps = [str(g).strip() for g in gaps if str(g).strip()] if isinstance(gaps, list) else []
+        if comp == "complete" and gaps:
+            comp = "partial"
+        questions.append({
+            "order": len(questions) + 1,
+            "text": text,
+            "qtype": (q.get("qtype") or "").strip() or "八股",
+            "topic_hint": (q.get("topic_hint") or "").strip() or None,
+            "has_answer": comp != "none",
+            "answer_completeness": comp,
+            "answer": answer or None,
+            "answer_gaps": gaps,
+            # True = 需要模型从零起草（没有现成答案可规范化）；只有 complete 才是 false。
+            # 注意这不等于"不建卡"：留用的题都建卡，这个字段只用来区分走哪条 prompt。
+            "suggest_build_card": comp != "complete",
+        })
+    data["questions"] = questions
+
+    dt = str(data.get("doc_type") or "").strip().lower()
+    if dt not in _DOC_TYPES:
+        dt = "interview" if len(questions) >= 2 else "single_question"
+    if len(questions) >= 2:
+        dt = "interview"
+    data["doc_type"] = dt
+    if dt != "interview":
+        for k in ("company", "position", "round", "interview_date"):
+            v = data.get(k)
+            if v and str(v).strip() not in raw_text:
+                data[k] = None
+        data["result"] = "unknown"
+
+    data["judgement"] = {
+        "doc_type": dt,
+        "n_questions": len(questions),
+        "n_bare": sum(1 for q in questions if q["answer_completeness"] == "none"),
+        "n_partial": sum(1 for q in questions if q["answer_completeness"] == "partial"),
+        "n_complete": sum(1 for q in questions if q["answer_completeness"] == "complete"),
+        "suggest_build": [q["order"] for q in questions if q["suggest_build_card"]],
+    }
     data["_prompt"] = {"name": "extract_interview", "version": version}
     return data
 

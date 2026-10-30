@@ -10,6 +10,8 @@ class CardDraftReq(BaseModel):
     question_ids: list[str] = Field(default_factory=list)   # 空 = 自动挑高频无卡题
     limit: int = 3
     only_uncarded: bool = True
+    # 题目池里有原文答案时优先走"答案规范化"（低风险），默认开启
+    low_risk: bool = True
 
 
 @router.post("/cards/draft")
@@ -17,7 +19,7 @@ def draft_cards(req: CardDraftReq):
     """用 LLM 为题目起草知识卡，产出待审批动作（不直接写库）。"""
     try:
         return multi_agent.draft_cards(req.question_ids, limit=max(1, min(req.limit, 10)),
-                                       only_uncarded=req.only_uncarded)
+                                       only_uncarded=req.only_uncarded, low_risk=req.low_risk)
     except ValueError as e:
         raise HTTPException(404, str(e))
     except RuntimeError as e:

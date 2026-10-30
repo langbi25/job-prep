@@ -73,7 +73,7 @@ def draft_remediation(session_id: str) -> dict:
 
 
 def draft_cards(question_ids: list[str] | None = None, limit: int = 3,
-                only_uncarded: bool = True) -> dict:
+                only_uncarded: bool = True, low_risk: bool = False) -> dict:
     """为题目池里的题起草知识卡（LLM），产出 pending 的 create_card 动作，人工审批后落库。
 
     设计要点：
@@ -81,6 +81,11 @@ def draft_cards(question_ids: list[str] | None = None, limit: int = 3,
       所以一律走 HITL——草稿进审批中心，人确认后才成为事实源；
     - 同一道题已有 pending 草稿时跳过，避免重复烧 token；
     - 校验 points 数量与长度，把"要注意性能"这类空话挡在门外。
+
+    low_risk=True 走的是**另一条 prompt**（card_from_answer）：题目池里已经有面经原文抽出的
+    答案时，只做结构化与措辞规范化，禁止补充原文没有的技术点。这类草稿 payload 带
+    `low_risk=True`，审批页允许勾选批量通过——但**仍然过审批**：answer_points 会被
+    context_builder 塞进模拟面试的评分上下文，错一条污染的是整轮打分。
     """
     from ..core import llm, prompts
     from . import coverage_service
@@ -128,10 +133,30 @@ def draft_cards(question_ids: list[str] | None = None, limit: int = 3,
 
     created, failed = [], []
     for q in todo:
+        # 有原文答案 → 走"规范化"分支（内容不是我编的）；否则从零起草
+        answer = ""
+        if low_risk:
+            try:
+                pts = json.loads(q["answer_points_json"] or "[]")
+            except (ValueError, TypeError):
+                pts = []
+            answer = "\n".join(str(p).strip() for p in pts if str(p).strip())
+        from_answer = bool(answer)
         try:
-            system, user, version = prompts.render(
-                "card_draft", question=q["text"], qtype=q["qtype"] or "未标注",
-                topic=q["topic"] or "未标注", freq=q["freq_count"], existing=existing)
+            if from_answer:
+                try:
+                    gaps = json.loads(q["answer_gaps_json"] or "[]")
+                except (ValueError, TypeError):
+                    gaps = []
+                system, user, version = prompts.render(
+                    "card_from_answer", question=q["text"], topic=q["topic"] or "未标注",
+                    answer=answer[:4000],
+                    gaps="\n".join(f"- {g}" for g in gaps) or "（未标注）",
+                    existing=existing)
+            else:
+                system, user, version = prompts.render(
+                    "card_draft", question=q["text"], qtype=q["qtype"] or "未标注",
+                    topic=q["topic"] or "未标注", freq=q["freq_count"], existing=existing)
             data = llm.chat_parsed(system, user)
         except Exception as e:  # noqa: BLE001
             failed.append({"question_id": q["id"], "error": str(e)[:200]})
@@ -140,7 +165,9 @@ def draft_cards(question_ids: list[str] | None = None, limit: int = 3,
         points = [str(p).strip() for p in (data.get("points") or []) if str(p).strip()]
         points = [p for p in points if len(p) >= 8]          # 挡空话
         pitfalls = [str(p).strip() for p in (data.get("pitfalls") or []) if str(p).strip()]
-        if len(points) < 3:
+        # 原文规范化允许要点少（信息量就那么多，不许为凑数编内容）；从零起草仍要求 ≥3
+        min_points = 1 if from_answer else 3
+        if len(points) < min_points:
             failed.append({"question_id": q["id"], "error": f"要点不足（{len(points)} 条）"})
             continue
 
@@ -154,6 +181,10 @@ def draft_cards(question_ids: list[str] | None = None, limit: int = 3,
             "pitfalls": pitfalls[:4],
             "tags": [str(t)[:20] for t in (data.get("tags") or [])][:6],
             "prompt_version": version,
+            "origin": "extract" if from_answer else "agent",
+            "low_risk": from_answer,
+            "answer_gaps": [str(g)[:80] for g in (data.get("gaps") or [])][:4],
+            "coverage_note": (data.get("coverage_note") or "")[:200] or None,
         }
         aid = _new_action_id()
         conn = get_conn()
@@ -162,12 +193,15 @@ def draft_cards(question_ids: list[str] | None = None, limit: int = 3,
                 "INSERT INTO agent_actions (id,run_id,session_id,kind,payload_json,reason,status,created_at) "
                 "VALUES (?,?,?,?,?,?,'pending',?)",
                 (aid, None, None, "create_card", json.dumps(payload, ensure_ascii=False),
-                 (data.get("reason") or f"补建高频无卡题 {q['id']}")[:300], _now()))
+                 (data.get("reason") or (
+                     f"面经答案规范化（原文抽取）{q['id']}" if from_answer
+                     else f"补建高频无卡题 {q['id']}"))[:300], _now()))
             conn.commit()
         finally:
             conn.close()
         created.append({"action_id": aid, "question_id": q["id"], "title": payload["title"],
-                        "points": len(points), "topic": payload["topic"]})
+                        "points": len(points), "topic": payload["topic"],
+                        "low_risk": from_answer})
 
     return {"drafted": created, "failed": failed, "inserted": len(created)}
 
@@ -352,7 +386,9 @@ def decide(action_id: str, approve: bool) -> dict:
                     "points": payload.get("points") or [],
                     "pitfalls": payload.get("pitfalls") or [],
                     "tags": payload.get("tags") or ["Agent建议"],
-                    "source_type": "agent",
+                    # 来源可追溯：md frontmatter 里写 source: extract 的卡，
+                    # 要点来自面经原文答案；source: agent 的是模型从零写的。
+                    "source_type": "extract" if payload.get("low_risk") else "agent",
                 })
                 result = {"card_id": card["id"]}
                 # 实战卡回灌：与原卡互链，让"通用答案"和"我真的做过"连起来

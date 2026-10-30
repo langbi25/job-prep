@@ -37,6 +37,8 @@ class ConfirmedQuestion(BaseModel):
     qtype: str = ""
     topic: str = ""
     merge_into: str | None = None   # 人工指定的归并目标 q-xxxx
+    # None = 用抽取阶段的判定（单纯题目/答案不完整 → 建卡）；True/False = 人工改判
+    build_card: bool | None = None
 
 
 class ConfirmPayload(BaseModel):

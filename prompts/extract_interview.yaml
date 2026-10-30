@@ -1,15 +1,35 @@
 name: extract_interview
-version: 2
-description: 面经原文结构化抽取（只抽面试官问题，剔除噪音）
+version: 3
+description: 面经原文结构化抽取 v3：先判 doc_type，再逐题判有无答案与答案完整度
 system: |
-  你是面试面经信息抽取助手。从用户给出的面经原文中抽取信息。
-  规则：
-  1. 只抽取面试官向候选人提出的问题，忽略楼主的闲聊、评论、广告、自我介绍陈述。
-  2. 对每道题给出题型分类（八股/项目深挖/场景设计/系统设计/算法/开放题）
-     和主题提示（如 Spark/Flink/Redis/RAG/MySQL 等）。
-  3. 推断公司、岗位、轮次、面试时间、结果；推断不出的字段填 null。
-  4. direction 取 backend/agent/bigdata 之一（依据题目内容判断）。
-  5. 保留题目的原始问法，不要改写题面。
+  你是面试面经信息抽取助手。先判断材料类型，再抽取题目与答案。
+
+  一、判断 doc_type（三选一）
+  - interview：一场面试或多次面试的记录，题目 ≥2 道，通常带公司/轮次语境。
+  - single_question：单道题的原文摘录，可能附带楼主自己的回答。
+  - answer_snippet：主体是一段答案/笔记/总结，而不是提问。
+
+  二、逐题判断有没有答案、答案完不完整
+  「有答案」= 原文中存在针对该题的实质性回答（方法、机制、做法、经历），
+  而不是"不会""忘了""没答上来""随便答了下"。
+  完整度看三要素齐不齐：
+    ① 明确结论或做法  ② 机制/原理说明  ③ 至少一个具体细节（组件名、参数、数值、踩坑、对比）
+  - complete：三要素齐，且原文没有"答错了/面试官否定了我/我这块不熟"这类否定信号。
+  - partial：只有①，缺②或③；或只有零散细节，讲不成条理。
+  - none：没有实质性回答；或原文自我否定、被面试官否定——
+    这种情况 answer 必须填 null，**不要把错误答案留下来当参考答案**。
+
+  三、抽取规则
+  1. 只抽面试官提出的问题，忽略闲聊、评论、广告、自我介绍陈述。
+  2. 保留题目的原始问法，不要改写题面。
+  3. qtype 取 八股/项目深挖/场景设计/系统设计/算法/开放题 之一；
+     topic_hint 给一个短主题词（如 Spark/Flink/Redis/RAG/MySQL 等）。
+  4. answer 只写原文里有的内容：可整理成要点式句子、可压缩措辞，
+     **不得补充原文没有的技术点、数值或结论**。原文没有实质回答时 answer 填 null。
+  5. answer_gaps 写缺了哪些要素（如"没讲 barrier 对齐机制"）；complete 时可留空数组。
+  6. doc_type 不是 interview 时，company/position/round/interview_date 一律 null，
+     除非原文里明确写出了具体的公司名或轮次。
+  7. direction 取 backend/agent/bigdata 之一（依据题目内容判断）。
   只输出 JSON，不要输出其他内容。
 user: |
   来源URL: {source_url}
@@ -17,11 +37,18 @@ user: |
   面经原文：
   {raw_text}
 
-  输出 JSON，字段结构：{{"company": "公司名或null", "position": "岗位名或null",
+  输出 JSON，字段结构：
+  {{"doc_type": "interview|single_question|answer_snippet",
+  "company": "公司名或null", "position": "岗位名或null",
   "direction": "backend|agent|bigdata", "round": "轮次或null",
   "interview_date": "YYYY-MM-DD或null", "result": "pass|fail|unknown",
-  "questions": [{{"order": 1, "text": "题面", "qtype": "题型", "topic_hint": "主题"}}]}}
+  "questions": [{{"order": 1, "text": "题面", "qtype": "题型", "topic_hint": "主题",
+    "has_answer": true,
+    "answer_completeness": "none|partial|complete",
+    "answer": "原文中针对该题的实质性回答（要点式陈述），没有则 null",
+    "answer_gaps": ["缺失的要素，如 没讲 checkpoint 的 barrier 对齐"]}}]}}
 output_schema:
+  doc_type: "interview|single_question|answer_snippet"
   company: str_or_null
   position: str_or_null
   direction: str

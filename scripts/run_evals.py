@@ -211,6 +211,63 @@ def eval_search_tool() -> dict:
 
 
 
+def _accept(v) -> list:
+    return v if isinstance(v, list) else [v]
+
+
+def eval_extract_judge() -> dict:
+    """评测"提取阶段的判定"，而不是抽取出的题面。
+
+    为什么这一层值得单独评：判定结果直接决定数据流向——
+    判成 complete 的题会用原文答案生成卡片（低风险分支），判成 none/partial 的题走
+    LLM 从零起草（高风险分支）。所以两列最关键：
+    - complete_precision：判成 complete 的里面有多少真是 complete。
+      误判 = 一段残缺甚至错误的回答被当成参考答案写进 question_pool，
+      而 context_builder 会把它塞进模拟面试的评分上下文，静默污染整轮打分。
+    - bare_recall：真实"光有题没答案"的题有没有被认出来。
+      漏判 = 该建卡的题没建，用户还是得手动去题目池补。
+    doc_type 允许一个用例给多个可接受答案：单题带"一面"语境本身就有歧义，
+    强行只认一个值会让评测变成在考标注员的手感。
+    """
+    cases = _load_jsonl(EVALS_DIR / "extract_judge_cases.jsonl")
+    doc_ok, pairs, details = 0, [], []
+    for c in cases:
+        try:
+            d = llm.extract_interview(c["raw"], "")
+        except Exception as e:  # noqa: BLE001
+            details.append({"id": c["id"], "error": f"{type(e).__name__}: {e}"[:120]})
+            continue
+        ok_doc = d["doc_type"] in _accept(c["expect_doc_type"])
+        doc_ok += ok_doc
+        preds = [q["answer_completeness"] for q in d["questions"]]
+        row = {"id": c["id"], "doc_ok": ok_doc, "doc": d["doc_type"],
+               "pred": preds, "exp": c["expect_completeness"], "mismatch": []}
+        for i, exp in enumerate(c["expect_completeness"]):
+            acc = _accept(exp)
+            pred = preds[i] if i < len(preds) else None
+            pairs.append((acc, pred))
+            if pred not in acc:
+                row["mismatch"].append({"i": i, "exp": acc, "got": pred})
+        details.append(row)
+
+    n_pairs = len(pairs) or 1
+    comp_ok = sum(1 for acc, pred in pairs if pred in acc)
+    pred_complete = [(acc, p) for acc, p in pairs if p == "complete"]
+    complete_precision = (sum(1 for acc, _ in pred_complete if "complete" in acc) / len(pred_complete)
+                          if pred_complete else 1.0)
+    bare = [(acc, p) for acc, p in pairs if acc == ["none"]]
+    bare_recall = sum(1 for _, p in bare if p == "none") / (len(bare) or 1)
+    return {
+        "cases": len(cases),
+        "doc_type_accuracy": round(doc_ok / (len(cases) or 1), 3),
+        "completeness_accuracy": round(comp_ok / n_pairs, 3),
+        "complete_precision": round(complete_precision, 3),
+        "bare_recall": round(bare_recall, 3),
+        "n_complete_pred": len(pred_complete),
+        "details": details,
+    }
+
+
 # ---------- 3. Agent 任务级 ----------
 def eval_agent_tasks() -> dict:
     """学习教练任务级评测：工具数、数据引用、时间预算三项是否都成立。"""
@@ -280,6 +337,18 @@ def gate(report: dict) -> tuple[bool, list[str]]:
         if st["gap_false_confident"] > th["search_tool_gap_false_confident"]:
             fails.append(f"search_kb 无卡题误标高置信 {st['gap_false_confident']} 例"
                          f" > {th['search_tool_gap_false_confident']}")
+    ex = report.get("extract_judge")
+    if ex:
+        if ex["doc_type_accuracy"] < th["extract_doc_type_accuracy"]:
+            fails.append(f"extract doc_type {ex['doc_type_accuracy']} < {th['extract_doc_type_accuracy']}")
+        if ex["completeness_accuracy"] < th["extract_completeness_accuracy"]:
+            fails.append(f"extract 完整度 {ex['completeness_accuracy']} < {th['extract_completeness_accuracy']}")
+        # 这两条是"数据流向正确性"而不是"抽取质量"：误判 complete = 污染评分基准
+        if ex["complete_precision"] < th["extract_complete_precision"]:
+            fails.append(f"complete 精确率 {ex['complete_precision']} < {th['extract_complete_precision']}"
+                         f"（错判会把残缺答案写成参考答案）")
+        if ex["bare_recall"] < th["extract_bare_recall"]:
+            fails.append(f"仅题目召回 {ex['bare_recall']} < {th['extract_bare_recall']}")
     return (not fails), fails
 
 
@@ -300,6 +369,7 @@ def main():
     if not args.skip_llm:
         report["scoring"] = eval_scoring(stability=args.stability)
         report["agent_tasks"] = eval_agent_tasks()
+        report["extract_judge"] = eval_extract_judge()
         report["retrieval"] = eval_retrieval(("fts", "hybrid", "full"))
     else:
         report["retrieval"] = eval_retrieval(("fts", "hybrid"))
@@ -343,6 +413,18 @@ def main():
         for d in st["gap_details"]:
             if d.get("false_confident"):
                 print(f"   FALSE-CONFIDENT {d['q']}… sim={d.get('sim')}")
+
+    ex = report.get("extract_judge")
+    if ex:
+        print(f"\n[提取判定] {ex['cases']} 例  doc_type={ex['doc_type_accuracy']}"
+              f"  完整度={ex['completeness_accuracy']}"
+              f"  complete 精确率={ex['complete_precision']}（判成 complete 的 {ex['n_complete_pred']} 条）"
+              f"  仅题目召回={ex['bare_recall']}")
+        for d in ex["details"]:
+            if d.get("error"):
+                print(f"   ERROR {d['id']}: {d['error']}")
+            elif not d["doc_ok"] or d["mismatch"]:
+                print(f"   MISS {d['id']}  doc={d['doc']} pred={d['pred']} exp={d['exp']}")
 
     if args.gate:
         passed, fails = gate(report)

@@ -18,10 +18,16 @@
       <el-tab-pane label="全部" name="" />
     </el-tabs>
 
-    <div v-if="tab === 'pending' && rows.length" style="margin-bottom: 10px">
+    <div v-if="tab === 'pending' && rows.length" style="margin-bottom: 10px;display:flex;gap:8px">
       <el-button type="success" size="small" :disabled="!selected.length" @click="batchApprove">
         批量批准（{{ selected.length }}）
       </el-button>
+      <el-button v-if="lowRiskRows.length" type="primary" plain size="small" @click="batchApproveLowRisk">
+        只批低风险（{{ lowRiskRows.length }}）
+      </el-button>
+      <span v-if="lowRiskRows.length" class="hint">
+        低风险 = 要点来自面经原文答案，模型只做了结构化；其余草稿是模型从零写的，建议逐条看
+      </span>
     </div>
 
     <el-table :data="rows" v-loading="loading" size="small" style="width: 100%"
@@ -30,6 +36,13 @@
       <el-table-column label="类型" width="110">
         <template #default="{ row }">
           <el-tag size="small" :type="kindType(row.kind)">{{ kindText(row.kind) }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="风险" width="96">
+        <template #default="{ row }">
+          <el-tag v-if="row.payload?.low_risk" size="small" type="success" effect="plain">原文抽取</el-tag>
+          <el-tag v-else-if="row.kind === 'create_card'" size="small" type="warning" effect="plain">模型起草</el-tag>
+          <span v-else style="color:#c0c4cc">—</span>
         </template>
       </el-table-column>
       <el-table-column label="目标" min-width="260" show-overflow-tooltip>
@@ -70,6 +83,10 @@
           <el-alert v-if="current.kind === 'fill_card'" type="warning" :closable="false" show-icon
                     style="margin-bottom: 10px"
                     :title="`补正文：卡片 ${current.payload.card_id} 当前要点为空（假覆盖）`" />
+          <el-alert v-else-if="current.payload.low_risk" type="success" :closable="false" show-icon
+                    style="margin-bottom: 10px"
+                    title="低风险：要点来自面经原文里的候选人回答，模型只做结构化与措辞规范化，未补充原文没有的技术点。"
+                    :description="current.payload.coverage_note || ''" />
           <h4>{{ current.payload.title }}</h4>
           <p class="meta">
             领域 {{ current.payload.domain }} / 主题 {{ current.payload.topic }}
@@ -77,6 +94,10 @@
           </p>
           <h4>答题要点（{{ current.payload.points?.length || 0 }} 条）</h4>
           <ol class="points"><li v-for="(p, i) in current.payload.points" :key="i">{{ p }}</li></ol>
+          <template v-if="current.payload.answer_gaps?.length">
+            <h4>原文没讲到的</h4>
+            <ul class="pitfalls"><li v-for="(g, i) in current.payload.answer_gaps" :key="i">{{ g }}</li></ul>
+          </template>
           <template v-if="current.payload.pitfalls?.length">
             <h4>常见坑</h4>
             <ul class="pitfalls"><li v-for="(p, i) in current.payload.pitfalls" :key="i">{{ p }}</li></ul>
@@ -111,7 +132,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
@@ -151,6 +172,8 @@ async function decide(row, approve) {
   load()
 }
 
+const lowRiskRows = computed(() => rows.value.filter((r) => r.status === 'pending' && r.payload?.low_risk))
+
 async function batchApprove() {
   await ElMessageBox.confirm(`批量批准 ${selected.value.length} 个动作？建卡动作会立刻写入知识库。`, '确认')
   let ok = 0
@@ -159,6 +182,21 @@ async function batchApprove() {
     if (res.status === 'approved') ok += 1
   }
   ElMessage.success(`已批准 ${ok} 个`)
+  load()
+}
+
+// 低风险批量：原文抽取的答案规范化草稿，内容不是模型编的，可以一次过。
+// 但仍然走审批而不是自动落库——answer_points 会进模拟面试的评分上下文。
+async function batchApproveLowRisk() {
+  await ElMessageBox.confirm(
+    `批准 ${lowRiskRows.value.length} 个「原文抽取」草稿？要点来自面经原文，但仍会写入知识库成为事实源。`,
+    '确认')
+  let ok = 0
+  for (const row of lowRiskRows.value) {
+    const res = await api.post(`/api/agent/actions/${row.id}/approve`)
+    if (res.status === 'approved') ok += 1
+  }
+  ElMessage.success(`已批准 ${ok} 个低风险草稿`)
   load()
 }
 
@@ -175,4 +213,5 @@ onMounted(load)
 .raw { background: #f5f7fa; padding: 12px; border-radius: 6px; font-size: 12px; overflow: auto; }
 .narrative { background: #f5f7fa; padding: 10px 12px; border-radius: 6px; font-size: 13px; line-height: 1.8; white-space: pre-wrap; }
 h4 { margin: 16px 0 6px; font-size: 14px; }
+.hint { color: #909399; font-size: 12px; line-height: 24px; }
 </style>

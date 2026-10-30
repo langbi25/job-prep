@@ -89,6 +89,8 @@ CREATE TABLE IF NOT EXISTS question_pool (
   topic         TEXT,
   difficulty    INTEGER,
   answer_points_json TEXT DEFAULT '[]',
+  answer_completeness TEXT,
+  answer_gaps_json TEXT DEFAULT '[]',
   freq_count    INTEGER NOT NULL DEFAULT 1,
   related_card_ids_json TEXT DEFAULT '[]',
   merged_into   TEXT REFERENCES question_pool(id),

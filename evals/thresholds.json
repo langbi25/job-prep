@@ -7,6 +7,10 @@
   "retrieval_paraphrase_hit5": 0.6,
   "search_tool_hit3": 0.8,
   "search_tool_gap_false_confident": 0,
+  "extract_doc_type_accuracy": 0.8,
+  "extract_completeness_accuracy": 0.7,
+  "extract_complete_precision": 0.7,
+  "extract_bare_recall": 0.8,
   "agent_task_success": 0.8,
   "avg_latency_s_max": 8.0
 }
