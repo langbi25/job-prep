@@ -1,0 +1,534 @@
+{
+  "timestamp": "2026-10-30T23:30:13",
+  "llm_calls": 0,
+  "search_tool": {
+    "cases": 14,
+    "hit3": 0.929,
+    "top1": 0.571,
+    "empty_point_hits": 8,
+    "gap_cases": 5,
+    "gap_false_confident": 0,
+    "gap_rate": 0.0,
+    "details": [
+      {
+        "q": "消息可靠性 不丢失 数据重复消费",
+        "kind": "keyword",
+        "ok": true,
+        "top1": true,
+        "confidence": "mid",
+        "top3": [
+          "kb-bigdata-kafka-002",
+          "kb-bigdata-flink-003",
+          "kb-agent-skill-001"
+        ],
+        "sim": 0.667
+      },
+      {
+        "q": "滚动窗口 滑动窗口 会话窗口区别",
+        "kind": "keyword",
+        "ok": true,
+        "top1": true,
+        "confidence": "high",
+        "top3": [
+          "kb-bigdata-flink-001",
+          "kb-bigdata-flink-003",
+          "kb-backend-redis-001"
+        ],
+        "sim": 0.837
+      },
+      {
+        "q": "实时数仓 埋点日志 看板 PV UV",
+        "kind": "keyword",
+        "ok": true,
+        "top1": true,
+        "confidence": "high",
+        "top3": [
+          "kb-bigdata-gen-001",
+          "kb-backend-redis-001",
+          "kb-bigdata-flink-003"
+        ],
+        "sim": 0.803
+      },
+      {
+        "q": "RDB AOF 区别",
+        "kind": "keyword",
+        "ok": true,
+        "top1": true,
+        "confidence": "mid",
+        "top3": [
+          "kb-backend-redis-001",
+          "kb-bigdata-flink-001",
+          "kb-agent-skill-001"
+        ],
+        "sim": 0.628
+      },
+      {
+        "q": "进程挂了内存里的东西还能找回来吗",
+        "kind": "paraphrase",
+        "ok": true,
+        "top1": false,
+        "confidence": "low",
+        "top3": [
+          "kb-bigdata-kafka-002",
+          "kb-backend-redis-001",
+          "kb-agent-skill-001"
+        ],
+        "sim": 0.539
+      },
+      {
+        "q": "消费者重启之后怎么找回上次读到哪了",
+        "kind": "paraphrase",
+        "ok": true,
+        "top1": true,
+        "confidence": "low",
+        "top3": [
+          "kb-bigdata-kafka-002",
+          "kb-bigdata-flink-003",
+          "kb-bigdata-gen-001"
+        ],
+        "sim": 0.51
+      },
+      {
+        "q": "同一个用户的数据全挤到一台机器上怎么办",
+        "kind": "paraphrase",
+        "ok": true,
+        "top1": false,
+        "confidence": "low",
+        "top3": [
+          "kb-bigdata-kafka-002",
+          "kb-bigdata-flink-003",
+          "kb-bigdata-flink-002"
+        ],
+        "sim": 0.527
+      },
+      {
+        "q": "大促当天看板要秒级刷新，整个链路怎么搭",
+        "kind": "paraphrase",
+        "ok": true,
+        "top1": false,
+        "confidence": "low",
+        "top3": [
+          "kb-bigdata-kafka-002",
+          "kb-backend-redis-001",
+          "kb-bigdata-gen-001"
+        ],
+        "sim": 0.515
+      },
+      {
+        "q": "按时间把数据流切开，有几种切法",
+        "kind": "paraphrase",
+        "ok": false,
+        "top1": false,
+        "confidence": "low",
+        "top3": [
+          "kb-bigdata-flink-003",
+          "kb-bigdata-flink-002",
+          "kb-backend-redis-001"
+        ],
+        "sim": 0.519
+      },
+      {
+        "q": "面试官问我消息丢了怎么办",
+        "kind": "paraphrase",
+        "ok": true,
+        "top1": true,
+        "confidence": "mid",
+        "top3": [
+          "kb-bigdata-kafka-002",
+          "kb-bigdata-flink-003",
+          "kb-agent-skill-001"
+        ],
+        "sim": 0.693
+      },
+      {
+        "q": "消息既不能丢也不能重，怎么做到刚好一次",
+        "kind": "distractor",
+        "ok": true,
+        "top1": true,
+        "confidence": "mid",
+        "top3": [
+          "kb-bigdata-kafka-002",
+          "kb-backend-redis-001",
+          "kb-bigdata-flink-001"
+        ],
+        "sim": 0.722
+      },
+      {
+        "q": "数据分布不均导致少数机器特别忙",
+        "kind": "distractor",
+        "ok": true,
+        "top1": false,
+        "confidence": "low",
+        "top3": [
+          "kb-bigdata-flink-003",
+          "kb-bigdata-gen-001",
+          "kb-bigdata-flink-002"
+        ],
+        "sim": 0.484
+      },
+      {
+        "q": "如何定位任务里的热点key",
+        "kind": "distractor",
+        "ok": true,
+        "top1": true,
+        "confidence": "low",
+        "top3": [
+          "kb-bigdata-flink-002",
+          "kb-bigdata-flink-003",
+          "kb-bigdata-flink-001"
+        ],
+        "sim": 0.566
+      },
+      {
+        "q": "Redis 断电后数据怎么恢复",
+        "kind": "distractor",
+        "ok": true,
+        "top1": false,
+        "confidence": "low",
+        "top3": [
+          "kb-bigdata-flink-003",
+          "kb-backend-redis-001",
+          "kb-bigdata-kafka-002"
+        ],
+        "sim": 0.546
+      }
+    ],
+    "gap_details": [
+      {
+        "q": "Memory怎么做的?怎么插入上下文?怎",
+        "confidence": "low",
+        "sim": 0.585,
+        "false_confident": false
+      },
+      {
+        "q": "Spark shuffle 的几种实现与",
+        "confidence": "low",
+        "sim": 0.533,
+        "false_confident": false
+      },
+      {
+        "q": "数仓分层怎么设计的，分层依据是什么？",
+        "confidence": "low",
+        "sim": 0.597,
+        "false_confident": false
+      },
+      {
+        "q": "模型的幻觉产生原因是什么?怎么减少?",
+        "confidence": "low",
+        "sim": 0.502,
+        "false_confident": false
+      },
+      {
+        "q": "Agent 项目的核心架构是怎么样的?",
+        "confidence": "low",
+        "sim": 0.511,
+        "false_confident": false
+      }
+    ]
+  },
+  "retrieval": {
+    "fts": {
+      "cases": 14,
+      "hit5": 0.643,
+      "mrr": 0.643,
+      "by_kind": {
+        "distractor": {
+          "cases": 4,
+          "hit5": 0.75,
+          "mrr": 0.75
+        },
+        "keyword": {
+          "cases": 4,
+          "hit5": 1.0,
+          "mrr": 1.0
+        },
+        "paraphrase": {
+          "cases": 6,
+          "hit5": 0.333,
+          "mrr": 0.333
+        }
+      },
+      "details": [
+        {
+          "q": "消息可靠性 不丢失 数据重复消费",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-flink-003"
+          ],
+          "ok": true
+        },
+        {
+          "q": "滚动窗口 滑动窗口 会话窗口区别",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-flink-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "实时数仓 埋点日志 看板 PV UV",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-gen-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "RDB AOF 区别",
+          "kind": "keyword",
+          "top3": [
+            "kb-backend-redis-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "进程挂了内存里的东西还能找回来吗",
+          "kind": "paraphrase",
+          "top3": [],
+          "ok": false
+        },
+        {
+          "q": "消费者重启之后怎么找回上次读到哪了",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "同一个用户的数据全挤到一台机器上怎么办",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-flink-003"
+          ],
+          "ok": false
+        },
+        {
+          "q": "大促当天看板要秒级刷新，整个链路怎么搭",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002"
+          ],
+          "ok": false
+        },
+        {
+          "q": "按时间把数据流切开，有几种切法",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-flink-003"
+          ],
+          "ok": false
+        },
+        {
+          "q": "面试官问我消息丢了怎么办",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "消息既不能丢也不能重，怎么做到刚好一次",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-kafka-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "数据分布不均导致少数机器特别忙",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-flink-003"
+          ],
+          "ok": false
+        },
+        {
+          "q": "如何定位任务里的热点key",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-flink-002",
+            "kb-bigdata-flink-003"
+          ],
+          "ok": true
+        },
+        {
+          "q": "Redis 断电后数据怎么恢复",
+          "kind": "distractor",
+          "top3": [
+            "kb-backend-redis-001",
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-flink-003"
+          ],
+          "ok": true
+        }
+      ]
+    },
+    "hybrid": {
+      "cases": 14,
+      "hit5": 1.0,
+      "mrr": 0.732,
+      "by_kind": {
+        "distractor": {
+          "cases": 4,
+          "hit5": 1.0,
+          "mrr": 0.708
+        },
+        "keyword": {
+          "cases": 4,
+          "hit5": 1.0,
+          "mrr": 1.0
+        },
+        "paraphrase": {
+          "cases": 6,
+          "hit5": 1.0,
+          "mrr": 0.569
+        }
+      },
+      "details": [
+        {
+          "q": "消息可靠性 不丢失 数据重复消费",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-flink-003",
+            "kb-agent-skill-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "滚动窗口 滑动窗口 会话窗口区别",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-flink-001",
+            "kb-bigdata-flink-003",
+            "kb-backend-redis-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "实时数仓 埋点日志 看板 PV UV",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-gen-001",
+            "kb-backend-redis-001",
+            "kb-bigdata-flink-003"
+          ],
+          "ok": true
+        },
+        {
+          "q": "RDB AOF 区别",
+          "kind": "keyword",
+          "top3": [
+            "kb-backend-redis-001",
+            "kb-bigdata-flink-001",
+            "kb-agent-skill-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "进程挂了内存里的东西还能找回来吗",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-backend-redis-001",
+            "kb-agent-skill-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "消费者重启之后怎么找回上次读到哪了",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-flink-003",
+            "kb-bigdata-gen-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "同一个用户的数据全挤到一台机器上怎么办",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-flink-003",
+            "kb-bigdata-flink-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "大促当天看板要秒级刷新，整个链路怎么搭",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-backend-redis-001",
+            "kb-bigdata-gen-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "按时间把数据流切开，有几种切法",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-flink-003",
+            "kb-bigdata-flink-002",
+            "kb-backend-redis-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "面试官问我消息丢了怎么办",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-bigdata-flink-003",
+            "kb-agent-skill-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "消息既不能丢也不能重，怎么做到刚好一次",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-backend-redis-001",
+            "kb-bigdata-flink-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "数据分布不均导致少数机器特别忙",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-flink-003",
+            "kb-bigdata-gen-001",
+            "kb-bigdata-flink-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "如何定位任务里的热点key",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-flink-002",
+            "kb-bigdata-flink-003",
+            "kb-bigdata-flink-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "Redis 断电后数据怎么恢复",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-flink-003",
+            "kb-backend-redis-001",
+            "kb-bigdata-kafka-002"
+          ],
+          "ok": true
+        }
+      ]
+    }
+  }
+}

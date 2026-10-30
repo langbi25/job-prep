@@ -5,6 +5,8 @@
   "json_validity": 1.0,
   "retrieval_hit5": 0.85,
   "retrieval_paraphrase_hit5": 0.6,
+  "search_tool_hit3": 0.8,
+  "search_tool_gap_false_confident": 0,
   "agent_task_success": 0.8,
   "avg_latency_s_max": 8.0
 }

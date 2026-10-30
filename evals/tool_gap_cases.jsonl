@@ -1,0 +1,5 @@
+{"query": "Memory怎么做的?怎么插入上下文?怎么考虑上下文长度问题?", "expected_card_id": null, "kind": "gap", "note": "q-0029 高频 5 次，无卡"}
+{"query": "Spark shuffle 的几种实现与区别？", "expected_card_id": null, "kind": "gap", "note": "q-0001 高频 3 次，无卡"}
+{"query": "数仓分层怎么设计的，分层依据是什么？", "expected_card_id": null, "kind": "gap", "note": "q-0002 高频 3 次，无卡"}
+{"query": "模型的幻觉产生原因是什么?怎么减少?", "expected_card_id": null, "kind": "gap", "note": "q-0035 高频 3 次，无卡"}
+{"query": "Agent 项目的核心架构是怎么样的?", "expected_card_id": null, "kind": "gap", "note": "q-0010 高频 2 次，无卡"}

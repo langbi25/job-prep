@@ -151,8 +151,69 @@ def eval_retrieval(modes=("fts", "hybrid", "full")) -> dict:
     return out
 
 
+# ---------- 2.5 检索工具（search_kb） ----------
+def eval_search_tool() -> dict:
+    """评测 Agent 手里的 search_kb 工具，而不是底层检索。
+
+    为什么要单测这一层：工具是"检索 + 过滤 + 截断 + 置信度标注"的组合，
+    底层 hit@5 好不代表工具可用——要点为空、卡被归档过滤、置信度误标，都只在工具层暴露。
+    两组用例：
+    - retrieval_cases.jsonl：有标准卡，量 hit@3 / top1
+    - tool_gap_cases.jsonl：无卡的高频题，量"是否被误标成高置信度"（误标 = Agent 以为有卡）
+    """
+    covered = _load_jsonl(EVALS_DIR / "retrieval_cases.jsonl")
+    gaps = _load_jsonl(EVALS_DIR / "tool_gap_cases.jsonl")
+    tool = harness._IMPL["search_kb"]
+
+    hits3, top1, empty_points, details = 0, 0, 0, []
+    for c in covered:
+        try:
+            r = tool({"query": c["query"], "top_k": 3})
+        except Exception as e:  # noqa: BLE001
+            details.append({"q": c["query"][:20], "ok": False, "error": str(e)[:80]})
+            continue
+        ids = [h["card_id"] for h in r.get("hits", [])]
+        ok3 = c["expected_card_id"] in ids
+        ok1 = bool(ids) and ids[0] == c["expected_card_id"]
+        hits3 += ok3
+        top1 += ok1
+        for h in r.get("hits", []):
+            if not h.get("points"):
+                empty_points += 1
+        details.append({"q": c["query"][:20], "kind": c.get("kind"), "ok": ok3, "top1": ok1,
+                        "confidence": r.get("confidence"), "top3": ids[:3],
+                        "sim": r.get("max_similarity")})
+
+    false_confident, gap_details = 0, []
+    for c in gaps:
+        try:
+            r = tool({"query": c["query"], "top_k": 3})
+        except Exception as e:  # noqa: BLE001
+            gap_details.append({"q": c["query"][:20], "error": str(e)[:80]})
+            continue
+        bad = r.get("confidence") == "high"
+        false_confident += bad
+        gap_details.append({"q": c["query"][:20], "confidence": r.get("confidence"),
+                            "sim": r.get("max_similarity"), "false_confident": bad})
+
+    n = len(covered) or 1
+    return {
+        "cases": len(covered),
+        "hit3": round(hits3 / n, 3),
+        "top1": round(top1 / n, 3),
+        "empty_point_hits": empty_points,
+        "gap_cases": len(gaps),
+        "gap_false_confident": false_confident,
+        "gap_rate": round(false_confident / (len(gaps) or 1), 3),
+        "details": details,
+        "gap_details": gap_details,
+    }
+
+
+
 # ---------- 3. Agent 任务级 ----------
 def eval_agent_tasks() -> dict:
+    """学习教练任务级评测：工具数、数据引用、时间预算三项是否都成立。"""
     tasks = _load_jsonl(EVALS_DIR / "agent_tasks.jsonl")
     details, ok_count = [], 0
     for t in tasks:
@@ -211,6 +272,14 @@ def gate(report: dict) -> tuple[bool, list[str]]:
     at = report.get("agent_tasks")
     if at and at["success_rate"] < th["agent_task_success"]:
         fails.append(f"agent_task_success {at['success_rate']} < {th['agent_task_success']}")
+    st = report.get("search_tool")
+    if st:
+        if st["hit3"] < th["search_tool_hit3"]:
+            fails.append(f"search_kb hit@3 {st['hit3']} < {th['search_tool_hit3']}")
+        # 无卡题被标成 high = Agent 会以为"我有卡"，比检索不到更危险
+        if st["gap_false_confident"] > th["search_tool_gap_false_confident"]:
+            fails.append(f"search_kb 无卡题误标高置信 {st['gap_false_confident']} 例"
+                         f" > {th['search_tool_gap_false_confident']}")
     return (not fails), fails
 
 
@@ -227,6 +296,7 @@ def main():
     report = {"timestamp": datetime.datetime.now().isoformat(timespec="seconds"), "llm_calls": 0}
     before = llm.stats()["calls"]
 
+    report["search_tool"] = eval_search_tool()
     if not args.skip_llm:
         report["scoring"] = eval_scoring(stability=args.stability)
         report["agent_tasks"] = eval_agent_tasks()
@@ -261,6 +331,18 @@ def main():
         print(f"\n[Agent 任务级] success_rate={a['success_rate']}")
         for d in a["details"]:
             print(f"   {'OK' if d['ok'] else 'FAIL'} {d['task']}  tools={d.get('tools')} items={d.get('items')} min={d.get('minutes')} {d.get('checks', '')}")
+
+    st = report.get("search_tool")
+    if st:
+        print(f"\n[search_kb 工具] 有卡 {st['cases']} 例  hit@3={st['hit3']}  top1={st['top1']}"
+              f"  空要点命中 {st['empty_point_hits']} 次")
+        print(f"                 无卡 {st['gap_cases']} 例  误标高置信 {st['gap_false_confident']} 例")
+        for d in st["details"]:
+            if not d.get("ok"):
+                print(f"   MISS {d['q']}… exp={d.get('kind')} got={d.get('top3')} conf={d.get('confidence')}")
+        for d in st["gap_details"]:
+            if d.get("false_confident"):
+                print(f"   FALSE-CONFIDENT {d['q']}… sim={d.get('sim')}")
 
     if args.gate:
         passed, fails = gate(report)

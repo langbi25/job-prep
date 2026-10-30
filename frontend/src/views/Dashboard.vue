@@ -52,6 +52,30 @@
         </el-card>
       </el-col>
     </el-row>
+
+    <el-card shadow="never" style="margin-top: 16px">
+      <template #header>
+        <div class="card-head">
+          <span>Agent 轨迹 · 最近运行</span>
+          <el-button size="small" :loading="running" @click="runAgent">跑一次学习教练</el-button>
+        </div>
+      </template>
+      <el-empty v-if="!runs.length" description="还没有运行记录：点右上角跑一次，或从复习中心发起" :image-size="60" />
+      <div v-for="r in runs" :key="r.id" class="run-row">
+        <div class="run-head">
+          <span class="mono">{{ r.id }}</span>
+          <el-tag size="small" :type="r.status === 'done' ? 'success' : 'warning'">{{ r.status }}</el-tag>
+          <span class="run-time">{{ r.created_at }}</span>
+          <span class="run-tools">工具 {{ toolNames(r).length }} 个 · 调用 {{ callCount(r) }} 次</span>
+        </div>
+        <div class="tool-chips">
+          <el-tag v-for="t in toolChain(r)" :key="t.key" size="small"
+                  :type="t.tool === 'search_kb' ? 'primary' : 'info'" effect="plain">
+            {{ t.tool }}<template v-if="t.n > 1"> ×{{ t.n }}</template>
+          </el-tag>
+        </div>
+      </div>
+    </el-card>
   </div>
 </template>
 
@@ -62,6 +86,8 @@ import api from '../api'
 
 const m = ref({})
 const actions = ref([])
+const runs = ref([])
+const running = ref(false)
 const error = ref('')
 
 const statCards = computed(() => [
@@ -73,12 +99,41 @@ const statCards = computed(() => [
 
 function pct(x) { return x == null ? '—' : `${Math.round(x * 100)}%` }
 
+// 一次 Agent 运行里"调了哪些工具、各几次"：把 trace 压成有序去重链，
+// 这是可观测性的最小可见形式——看不到调了什么，就没法判断它是不是在瞎猜。
+function toolChain(run) {
+  const seen = new Map()
+  for (const s of run.steps || []) {
+    if (!s.tool || s.tool === 'final_answer') continue
+    const key = s.tool
+    seen.set(key, { key, tool: s.tool, n: (seen.get(key)?.n || 0) + 1 })
+  }
+  return [...seen.values()]
+}
+function toolNames(run) { return toolChain(run).map((t) => t.tool) }
+function callCount(run) {
+  return (run.steps || []).filter((s) => s.tool && s.tool !== 'final_answer').length
+}
+
+async function loadRuns() {
+  try { runs.value = (await api.get('/api/agent/runs', { params: { limit: 3 } })) || [] } catch { runs.value = [] }
+}
+
+async function runAgent() {
+  running.value = true
+  try {
+    await api.post('/api/agent/plan', { direction: 'backend' })
+    await loadRuns()
+  } finally { running.value = false }
+}
+
 async function load() {
   error.value = ''
   try {
     m.value = await api.get('/api/flywheel/metrics')
     const evo = await api.get('/api/evolution/report')
     actions.value = (evo.actions || []).slice(0, 6)
+    await loadRuns()
   } catch { error.value = '后端未连接，请先启动 API 服务 (端口 8765)' }
 }
 
@@ -102,4 +157,12 @@ onMounted(load)
 .action-row:last-child { border-bottom: none; }
 .action-target { font-size: 13px; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .action-why { color: #909399; font-size: 12px; }
+.card-head { display: flex; justify-content: space-between; align-items: center; }
+.run-row { padding: 10px 0; border-bottom: 1px dashed #ebeef5; }
+.run-row:last-child { border-bottom: none; }
+.run-head { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.run-head .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+.run-time { color: #909399; font-size: 12px; }
+.run-tools { color: #909399; font-size: 12px; margin-left: auto; }
+.tool-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0 0; }
 </style>

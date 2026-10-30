@@ -12,7 +12,7 @@ import random
 import re
 import traceback
 
-from ..core import config, llm, prompts
+from ..core import config, embedder, llm, prompts
 from ..core.db import get_conn
 from . import review_service
 
@@ -38,6 +38,15 @@ TOOLS = [
         "name": "get_top_questions",
         "description": "获取面经题池中的高频题目（按出现次数排序）",
         "parameters": {"type": "object", "properties": {"limit": {"type": "integer"}}}}},
+    {"type": "function", "function": {
+        "name": "search_kb",
+        "description": "在知识库里做混合检索，返回相关卡片（标题/主题/掌握度/要点原文）。"
+                       "需要回忆'我到底记过什么'时用它，不要凭记忆编内容。没命中说明是知识缺口。",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "检索语句，可用题目原文或关键词"},
+            "topic": {"type": "string", "description": "限定主题（可选），如 Flink / Agent 记忆"},
+            "top_k": {"type": "integer", "description": "返回卡片数，默认 3，最多 5"}},
+            "required": ["query"]}}},
 ]
 
 
@@ -65,12 +74,99 @@ def _top_questions(args: dict) -> list:
         conn.close()
 
 
+def _search_kb(args: dict) -> dict:
+    """知识库混合检索工具：把"卡片"变成 Agent 能读的东西。
+
+    和其它四个工具的区别：那四个返回**清单**（有哪些卡/哪些题），
+    这个返回**内容**（卡里写了什么要点）。没有它，Agent 只能知道"我有一张卡"，
+    不能知道"这张卡讲了什么"，也就没法自己判断该复习还是该建卡。
+    返回带 card_id 可溯源，points 截断到 120 字/条防上下文膨胀。
+    """
+    from . import rag_service  # 局部导入：rag_service 不依赖 harness，避免模块级循环
+
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return {"error": "query 不能为空"}
+    try:
+        top_k = int(args.get("top_k", 3) or 3)
+    except (TypeError, ValueError):
+        top_k = 3
+    top_k = max(1, min(5, top_k))
+    topic = str(args.get("topic") or "").strip()
+
+    # 带主题过滤时多召一些再筛，否则筛完可能不够 top_k
+    hits = rag_service.search(query, scope="cards", top_k=top_k * 3 if topic else top_k, mode="hybrid")
+
+    # 置信度：不能靠 cosine 硬过滤。实测"换个问法"的合法命中只有 0.48~0.69，
+    # 而无卡题也能到 0.50~0.60——两段重叠，卡阈值必然误杀。
+    # 所以只把相似度透给模型，让它看着要点自己判断"这是答案还是只是同主题"。
+    sims: dict[str, float] = {}
+    if embedder.available():
+        try:
+            sims = {cid: float(s) for cid, s in embedder.search_similar(query, "card", top_k=20)}
+        except Exception:  # noqa: BLE001  向量挂了不影响工具可用
+            sims = {}
+
+    conn = get_conn()
+    try:
+        rows = {}
+        for h in hits:
+            r = conn.execute(
+                "SELECT id,title,topic,mastery,points_json,related_json FROM kb_cards "
+                "WHERE id=? AND status='active'", (h["id"],)).fetchone()
+            if r:
+                rows[r["id"]] = dict(r)
+    finally:
+        conn.close()
+
+    out = []
+    for h in hits:
+        r = rows.get(h["id"])
+        if not r:
+            continue  # 归档卡：向量可能残留，这里按 active 兜底过滤
+        if topic and topic not in (r["topic"] or ""):
+            continue
+        points = json.loads(r["points_json"] or "[]")
+        item = {
+            "card_id": r["id"], "title": r["title"], "topic": r["topic"],
+            "mastery": r["mastery"], "score": round(float(h.get("score", 0)), 4),
+            "similarity": round(sims.get(r["id"], 0.0), 3),
+            "via": h.get("legs") or [],
+            "points": [str(p)[:120] for p in points[:4]],
+            "n_points": len(points),
+            "related": json.loads(r["related_json"] or "[]"),
+        }
+        if not points:
+            # 空壳卡：有卡但没内容，对 Agent 等于"查到了但读不到"，
+            # 明确标出来，否则模型会以为已掌握（更危险的是它开始自己编）
+            item["warning"] = "该卡无要点（空壳卡），只能说明有这个主题，不能当答案用"
+        out.append(item)
+        if len(out) >= top_k:
+            break
+
+    max_sim = max([h["similarity"] for h in out], default=0.0)
+    if not out:
+        confidence, note = "none", "知识库无相关卡片 —— 这是知识缺口，应提议建卡，不要凭记忆编造"
+    elif max_sim >= 0.75:
+        confidence, note = "high", ""
+    elif max_sim >= 0.60:
+        confidence, note = "mid", "中等相关：可能只是换了问法，也可能只是同主题，需对照要点判断"
+    else:
+        confidence, note = "low", "无高置信度卡片：要点若与本问题对不上，按知识缺口处理（提议建卡）"
+    hollow = [h["card_id"] for h in out if not h["points"]]
+    if hollow:
+        note = (note + "；" if note else "") + f"其中 {','.join(hollow)} 无要点，不能当答案用"
+    return {"query": query, "hits": out, "max_similarity": round(max_sim, 3),
+            "confidence": confidence, "note": note}
+
+
 _IMPL = {
     "get_daily_brief": lambda a: review_service.daily_brief(),
     "list_due_cards": lambda a: review_service.due_cards(limit=int(a.get("limit", 10))),
     "list_open_mistakes": _list_open_mistakes,
     "get_weak_topics": lambda a: review_service.weak_topics(a.get("direction")),
     "get_top_questions": _top_questions,
+    "search_kb": _search_kb,
 }
 
 
@@ -205,7 +301,9 @@ def run_study_plan_agent(direction: str, max_iters: int = 6) -> dict:
     # prompt 从注册表渲染，不再硬编码——否则 prompt 文件里的 schema 约定形同虚设
     system, user, prompt_ver = prompts.render("study_plan", direction=direction)
     messages = [
-        {"role": "system", "content": system + "\n优先调用 get_daily_brief 掌握全局，再按需深入具体工具。"},
+        {"role": "system", "content": system + "\n优先调用 get_daily_brief 掌握全局，再按需深入具体工具。"
+                                             "需要回忆「我到底记过什么」时调用 search_kb（传题目原文或关键词）；"
+                                             "search_kb 返回空 = 知识缺口，按建卡处理，不要凭记忆编内容。"},
         {"role": "user", "content": user},
     ]
     try:

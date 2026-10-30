@@ -9,6 +9,7 @@
 |---|---|
 | `golden_answers.jsonl` | 评分校准集：题目 + 不同质量的回答 + 人工标注档位 |
 | `retrieval_cases.jsonl` | 检索集：查询 + 应命中的卡片 id + 查询类型 |
+| `tool_gap_cases.jsonl` | 缺口集：无卡的高频题，用于检验 `search_kb` 不会把"没卡"说成"有卡" |
 | `agent_tasks.jsonl` | Agent 任务级：方向 + 必须提的字段 + 工具数/时长上限 |
 | `thresholds.json` | 门禁阈值，`run_evals.py --gate` 与 `ci_gate.py` 共用 |
 | `results-*.json` | 每次评测的完整报告（留档，可对比版本） |
@@ -81,6 +82,23 @@
 
 计划结构在 `harness._normalize_plan()` 里被强制归一成 `list[{priority, action, reason, minutes}]`，
 评测只依赖归一后的结构——模型输出走样不会让评测崩掉。
+
+## 三·五、为什么 search_kb 要单独评
+
+底层 `rag_service.search` 的 hit@5 好，不代表 Agent 手里的工具好用——工具是
+"检索 + 归档过滤 + 要点截断 + 置信度标注"的组合，问题只在工具层暴露：
+
+| 指标 | 含义 | 门禁 |
+|---|---|---|
+| `hit3` | 有卡用例里，正确卡是否出现在前 3 | ≥ 0.8 |
+| `top1` | 正确卡是否排第一（RRF 在 7 张卡的小语料上抖动明显，只报不卡） | — |
+| `empty_point_hits` | 命中了但要点为空的次数 → 空壳卡数量 | 只报，靠人补 |
+| `gap_false_confident` | 无卡题被标成 `high` 的例数（Agent 会误以为"我有卡"） | = 0 |
+
+关键取舍：**没有用 cosine 硬阈值过滤"没卡"**。实测"换个问法"的合法命中只有
+0.48~0.69，而无卡题也能到 0.50~0.60，两段重叠，卡阈值必然误杀好召回。
+所以工具只透出 `similarity` + `confidence`（high/mid/low/none），由模型对着
+要点自己判断"这是答案还是只是同主题"——这正是把内容而不只是 id 交给它的意义。
 
 ## 四、怎么跑
 
