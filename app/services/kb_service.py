@@ -167,6 +167,40 @@ def update_card_content(card_id: str, points: list[str], pitfalls: list[str] | N
         conn.close()
 
 
+def link_question_card(question_id: str, card_id: str) -> bool:
+    """把"这张卡是为这道题建的"写进题目池。返回是否新增。
+
+    为什么必须存这条关系：`question_pool.related_card_ids_json` 一直空着，
+    而覆盖统计靠余弦相似度去**猜**某道题有没有卡。可是建卡时明明知道是为哪道题建的——
+    用猜的就把确定性丢了，于是出现"审批通过后题目仍显示无卡"：
+      q-0029「Memory 怎么做的」→ 卡「Agent 记忆」相似度 0.804（同主题门槛只需 0.75），
+      但题目 topic 是 "Memory"、卡片 topic 是 "Agent 记忆"，字符串不相等被判成跨主题
+      （门槛 0.85）→ 0.804 < 0.85 → 判无卡。
+    有了这条硬关联，只要卡还在（status='active'），这道题就算被覆盖，与措辞无关。
+    """
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT related_card_ids_json FROM question_pool WHERE id=?", (question_id,)).fetchone()
+        if not row:
+            return False
+        try:
+            ids = json.loads(row["related_card_ids_json"] or "[]")
+        except (ValueError, TypeError):
+            ids = []
+        if not isinstance(ids, list):
+            ids = []
+        if card_id in ids:
+            return False
+        ids.append(card_id)
+        conn.execute("UPDATE question_pool SET related_card_ids_json=? WHERE id=?",
+                     (json.dumps(ids, ensure_ascii=False), question_id))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
 def link_related(card_id: str, other_id: str) -> bool:
     """双向关联两张卡（原卡 ↔ 实战卡）。related 同时写库与 md frontmatter。
 

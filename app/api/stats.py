@@ -104,7 +104,7 @@ def list_questions(q: str | None = None, qtype: str | None = None, topic: str | 
             from ..services import coverage_service
 
             for it in out:
-                card = coverage_service._match_card(conn, it["text"], it["topic"])
+                card = coverage_service._match_card(conn, it["text"], it["topic"], it["id"])
                 it["card"] = ({"id": card["id"], "title": card["title"], "mastery": card["mastery"],
                                "similarity": card["similarity"]} if card else None)
         return out

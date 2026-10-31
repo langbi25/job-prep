@@ -166,7 +166,10 @@ function toPlan(row) {
 }
 
 function openCreate(row) {
-  form.value = { title: row.text, domain: 'backend', topic: row.topic || '', question: row.text }
+  form.value = {
+    title: row.text, domain: 'backend', topic: row.topic || '', question: row.text,
+    question_id: row.id,          // 带上题号，建完卡这道题立刻不再是"无卡"
+  }
   pointsText.value = ''
   pitfallsText.value = ''
   dialog.value = true
@@ -178,7 +181,7 @@ async function save() {
     const points = pointsText.value.split('\n').map((s) => s.trim()).filter(Boolean)
     const pitfalls = pitfallsText.value.split('\n').map((s) => s.trim()).filter(Boolean)
     await api.post('/api/cards', { ...form.value, points, pitfalls, tags: [] })
-    ElMessage.success('卡片已建，去知识库可见；作战地图重新分析后覆盖会更新')
+    ElMessage.success('卡片已建，这道题的覆盖状态已刷新（去知识库能编辑要点）')
     dialog.value = false
     load()
   } finally { saving.value = false }

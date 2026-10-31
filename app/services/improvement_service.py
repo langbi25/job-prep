@@ -58,7 +58,7 @@ def draft_plan(question_id: str, focus: str = "") -> dict:
             raise ValueError(f"题目不存在: {question_id}")
         from .coverage_service import _match_card
 
-        card = _match_card(conn, q["text"], q["topic"])
+        card = _match_card(conn, q["text"], q["topic"], q["id"])
         card_points = "（无相关卡片）"
         if card:
             row = conn.execute("SELECT points_json FROM kb_cards WHERE id=?", (card["id"],)).fetchone()

@@ -8,7 +8,16 @@ router = APIRouter(prefix="/api/cards", tags=["cards"])
 
 @router.post("")
 def create_card(payload: CardCreate):
-    return kb_service.create_card(payload.model_dump())
+    data = payload.model_dump()
+    qid = data.pop("question_id", None)
+    card = kb_service.create_card(data)
+    if qid:
+        try:
+            if kb_service.link_question_card(qid, card["id"]):
+                card["linked_question"] = qid
+        except Exception as e:  # noqa: BLE001
+            card["link_question_error"] = str(e)[:120]
+    return card
 
 
 @router.get("")

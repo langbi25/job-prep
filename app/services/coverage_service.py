@@ -35,32 +35,78 @@ def _norm_topic(s: str | None) -> str:
     return re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", s or "").lower()
 
 
-def _match_card(conn, text: str, topic: str | None = None) -> dict | None:
-    """题目 ↔ 知识卡匹配：同主题靠 0.75 阈值，跨主题必须 0.85 近同句。
+def _same_topic(a: str | None, b: str | None) -> bool:
+    """同一主题的判定：归一化后相等，或一方包含另一方。
+
+    只做 == 太脆：题目 topic 来自面经抽取的 topic_hint（"Memory" / "Spark"），
+    卡片 topic 来自建卡 prompt 自由生成（"Agent 记忆" / "Spark Shuffle 实现"），
+    粒度天然对不上。对不上就会被当成跨主题，门槛从 0.75 抬到 0.85，
+    把 0.80 这种真实覆盖直接挡在门外——这就是"审批通过后仍显示无卡"的主因之一。
+    """
+    na, nb = _norm_topic(a), _norm_topic(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    short, long_ = (na, nb) if len(na) <= len(nb) else (nb, na)
+    return len(short) >= 2 and short in long_
+
+
+def _card_row(conn, card_id: str):
+    return conn.execute(
+        "SELECT id, title, topic, mastery, question FROM kb_cards WHERE id=? AND status='active'",
+        (card_id,)).fetchone()
+
+
+def _linked_card(conn, question_id: str | None):
+    """硬关联：建卡时记下的"这张卡属于这道题"，命中即算覆盖，不必看相似度。"""
+    if not question_id:
+        return None
+    row = conn.execute(
+        "SELECT related_card_ids_json FROM question_pool WHERE id=?", (question_id,)).fetchone()
+    if not row:
+        return None
+    try:
+        ids = json.loads(row["related_card_ids_json"] or "[]")
+    except (ValueError, TypeError):
+        return None
+    for cid in ids if isinstance(ids, list) else []:
+        card = _card_row(conn, cid)
+        if card:
+            return dict(card) | {"similarity": 1.0, "via": "linked"}
+    return None
+
+
+def _match_card(conn, text: str, topic: str | None = None,
+                question_id: str | None = None) -> dict | None:
+    """题目 ↔ 知识卡匹配，三级判定：
+
+    ① 硬关联（related_card_ids_json）：建卡时记下的确定关系，命中直接算覆盖；
+    ② 同主题语义匹配：门槛 SIM_MIN(0.75)，主题用相等或包含判定；
+    ③ 跨主题近同句：门槛 CROSS_TOPIC_MIN(0.85)，防止"Agent 死循环"蹭到"Flink 反压"。
 
     阈值来自实测分布（6 张卡 × 55 题）：同主题真实覆盖 0.83~0.99；
-    跨主题噪声集中在 0.50~0.68（如"Agent 死循环"↔"Flink 反压"0.61），
-    单靠余弦会把它们全判成"有卡"，进而把最关键的缺口信号吃掉。
+    跨主题噪声集中在 0.50~0.68，单靠余弦会把噪声全判成"有卡"，吃掉缺口信号。
+    取 top_k=3 而不是 1：最近邻可能是另一张卡的噪声（q-0029 的 top3 是 0.804/0.799/0.787），
+    只看最近邻会因为"第一张恰好跨主题"而漏掉后面真正同主题的那张。
     """
     if not embedder.available():
         return None
+    linked = _linked_card(conn, question_id)
+    if linked:
+        return linked
     try:
-        hits = embedder.search_similar(text, "card", top_k=1)
+        hits = embedder.search_similar(text, "card", top_k=3)
     except Exception:
         return None
-    if not hits:
-        return None
-    row = conn.execute(
-        "SELECT id, title, topic, mastery, question FROM kb_cards WHERE id=? AND status='active'",
-        (hits[0][0],)).fetchone()
-    if not row:
-        return None
-    sim = hits[0][1]
-    same_topic = bool(topic) and _norm_topic(topic) == _norm_topic(row["topic"])
-    need = SIM_MIN if same_topic else CROSS_TOPIC_MIN
-    if sim < need:
-        return None
-    return dict(row) | {"similarity": round(sim, 3)}
+    for card_id, sim in hits:
+        row = _card_row(conn, card_id)
+        if not row:
+            continue
+        need = SIM_MIN if _same_topic(topic, row["topic"]) else CROSS_TOPIC_MIN
+        if sim >= need:
+            return dict(row) | {"similarity": round(sim, 3), "via": "semantic"}
+    return None
 
 
 def _predict(card: dict | None) -> tuple[str, str | None]:
@@ -89,7 +135,7 @@ def analyze_interview(interview_id: str) -> dict:
 
         items, gaps = [], []
         for q in questions:
-            card = _match_card(conn, q["text"], q["topic"])
+            card = _match_card(conn, q["text"], q["topic"], q["id"])
             pred, gap = _predict(card)
             mistake_n = conn.execute(
                 "SELECT COUNT(*) AS n FROM mistakes WHERE question_id=? AND resolved=0",
@@ -179,7 +225,7 @@ def evolution_report() -> dict:
     conn = get_conn()
     try:
         for q in questions:
-            card = _match_card(conn, q["text"], q["topic"])
+            card = _match_card(conn, q["text"], q["topic"], q["id"])
             rec = {"qid": q["id"], "text": q["text"], "topic": q["topic"],
                    "freq": q["freq_count"], "card_id": card["id"] if card else None}
             (matched if card else uncarded).append(rec)

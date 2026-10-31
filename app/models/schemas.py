@@ -11,6 +11,9 @@ class CardCreate(BaseModel):
     pitfalls: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     source_type: str = "manual"
+    # 从题目池点「建卡」时带上题号：落库后回写 question_pool.related_card_ids_json，
+    # 覆盖统计才认得出"这道题的卡就是这张"，不用再靠语义相似度猜。
+    question_id: str | None = None
 
 
 class CardUpdate(BaseModel):

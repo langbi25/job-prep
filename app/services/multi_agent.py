@@ -117,7 +117,7 @@ def draft_cards(question_ids: list[str] | None = None, limit: int = 3,
         for q in rows:
             if q["id"] in pending_qids:
                 continue
-            if only_uncarded and coverage_service._match_card(conn, q["text"], q["topic"]):
+            if only_uncarded and coverage_service._match_card(conn, q["text"], q["topic"], q["id"]):
                 continue
             todo.append(q)
             if len(todo) >= limit:
@@ -391,6 +391,15 @@ def decide(action_id: str, approve: bool) -> dict:
                     "source_type": "extract" if payload.get("low_risk") else "agent",
                 })
                 result = {"card_id": card["id"]}
+                # 记死"这张卡是为哪道题建的"——否则覆盖统计只能靠余弦去猜，
+                # 措辞一变就显示"审批通过了但还是无卡"。
+                qid = payload.get("question_id")
+                if qid:
+                    try:
+                        if kb_service.link_question_card(qid, card["id"]):
+                            result["linked_question"] = qid
+                    except Exception as e:  # noqa: BLE001
+                        result["link_question_error"] = str(e)[:120]
                 # 实战卡回灌：与原卡互链，让"通用答案"和"我真的做过"连起来
                 link = payload.get("link_card_id")
                 if link:
