@@ -1,5 +1,5 @@
-{"query": "Memory怎么做的?怎么插入上下文?怎么考虑上下文长度问题?", "expected_card_id": null, "kind": "gap", "note": "q-0029 高频 5 次，无卡"}
-{"query": "Spark shuffle 的几种实现与区别？", "expected_card_id": null, "kind": "gap", "note": "q-0001 高频 3 次，无卡"}
-{"query": "数仓分层怎么设计的，分层依据是什么？", "expected_card_id": null, "kind": "gap", "note": "q-0002 高频 3 次，无卡"}
-{"query": "模型的幻觉产生原因是什么?怎么减少?", "expected_card_id": null, "kind": "gap", "note": "q-0035 高频 3 次，无卡"}
-{"query": "Agent 项目的核心架构是怎么样的?", "expected_card_id": null, "kind": "gap", "note": "q-0010 高频 2 次，无卡"}
+{"query": "手写一道 SQL，窗口函数 over partition by。", "expected_card_id": null, "kind": "gap", "note": "SQL 手写题，库里没有对应卡"}
+{"query": "为什么不直接用Claude Code或公司内部 Agent?", "expected_card_id": null, "kind": "gap", "note": "技术选型题，考验的是判断而不是知识点"}
+{"query": "Plan &Execute 和 ReAct 两种范式有什么区别?分别适合什么场景?", "expected_card_id": null, "kind": "gap", "note": "范式对比，库里只有 ReAct 循环的碎片，没有独立卡"}
+{"query": "Agent死循环问题怎么解决?", "expected_card_id": null, "kind": "gap", "note": "故障处置题，与上下文压缩卡相邻但不同题"}
+{"query": "Multi-Agent中各Agent怎么通信? 上下文怎么管理?", "expected_card_id": null, "kind": "gap", "note": "多智能体通信，完全空白"}

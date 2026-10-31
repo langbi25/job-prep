@@ -12,3 +12,8 @@
 {"query": "数据分布不均导致少数机器特别忙", "expected_card_id": "kb-bigdata-flink-002", "kind": "distractor"}
 {"query": "如何定位任务里的热点key", "expected_card_id": "kb-bigdata-flink-002", "kind": "distractor"}
 {"query": "Redis 断电后数据怎么恢复", "expected_card_id": "kb-backend-redis-001", "kind": "distractor"}
+{"query": "Memory怎么做的?怎么插入上下文?怎么考虑上下文长度问题?", "expected_card_id": "kb-agent-agent-006", "kind": "covered", "note": "q-0029 高频 5 次，无卡（建卡后由 gap 用例转为有卡用例）"}
+{"query": "Spark shuffle 的几种实现与区别？", "expected_card_id": "kb-bigdata-sparkshu-001", "kind": "covered", "note": "q-0001 高频 3 次，无卡（建卡后由 gap 用例转为有卡用例）"}
+{"query": "数仓分层怎么设计的，分层依据是什么？", "expected_card_id": "kb-bigdata-gen-002", "kind": "covered", "note": "q-0002 高频 3 次，无卡（建卡后由 gap 用例转为有卡用例）"}
+{"query": "模型的幻觉产生原因是什么?怎么减少?", "expected_card_id": "kb-agent-llm-001", "kind": "covered", "note": "q-0035 高频 3 次，无卡（建卡后由 gap 用例转为有卡用例）"}
+{"query": "Agent 项目的核心架构是怎么样的?", "expected_card_id": "kb-agent-agent-001", "kind": "covered", "note": "q-0010 高频 2 次，无卡（建卡后由 gap 用例转为有卡用例）"}

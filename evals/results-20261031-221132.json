@@ -1,0 +1,730 @@
+{
+  "timestamp": "2026-10-31T22:11:26",
+  "llm_calls": 0,
+  "search_tool": {
+    "cases": 19,
+    "hit3": 0.737,
+    "top1": 0.684,
+    "empty_point_hits": 0,
+    "gap_cases": 5,
+    "gap_false_confident": 0,
+    "gap_rate": 0.0,
+    "details": [
+      {
+        "q": "消息可靠性 不丢失 数据重复消费",
+        "kind": "keyword",
+        "ok": true,
+        "top1": true,
+        "confidence": "mid",
+        "top3": [
+          "kb-bigdata-kafka-002",
+          "kb-agent-gen-004",
+          "kb-bigdata-gen-001"
+        ],
+        "sim": 0.667
+      },
+      {
+        "q": "滚动窗口 滑动窗口 会话窗口区别",
+        "kind": "keyword",
+        "ok": true,
+        "top1": true,
+        "confidence": "high",
+        "top3": [
+          "kb-bigdata-flink-001",
+          "kb-agent-agent-004",
+          "kb-agent-mcpskill-001"
+        ],
+        "sim": 0.837
+      },
+      {
+        "q": "实时数仓 埋点日志 看板 PV UV",
+        "kind": "keyword",
+        "ok": true,
+        "top1": true,
+        "confidence": "mid",
+        "top3": [
+          "kb-bigdata-gen-001",
+          "kb-bigdata-gen-002",
+          "kb-backend-gen-001"
+        ],
+        "sim": 0.727
+      },
+      {
+        "q": "RDB AOF 区别",
+        "kind": "keyword",
+        "ok": true,
+        "top1": true,
+        "confidence": "mid",
+        "top3": [
+          "kb-backend-redis-001",
+          "kb-agent-mcpskill-001",
+          "kb-bigdata-flink-001"
+        ],
+        "sim": 0.681
+      },
+      {
+        "q": "进程挂了内存里的东西还能找回来吗",
+        "kind": "paraphrase",
+        "ok": false,
+        "top1": false,
+        "confidence": "low",
+        "top3": [
+          "kb-agent-agent-001",
+          "kb-agent-gen-004",
+          "kb-bigdata-gen-001"
+        ],
+        "sim": 0.586
+      },
+      {
+        "q": "消费者重启之后怎么找回上次读到哪了",
+        "kind": "paraphrase",
+        "ok": true,
+        "top1": false,
+        "confidence": "low",
+        "top3": [
+          "kb-bigdata-gen-001",
+          "kb-agent-agent-006",
+          "kb-bigdata-kafka-002"
+        ],
+        "sim": 0.513
+      },
+      {
+        "q": "同一个用户的数据全挤到一台机器上怎么办",
+        "kind": "paraphrase",
+        "ok": false,
+        "top1": false,
+        "confidence": "low",
+        "top3": [
+          "kb-bigdata-gen-002",
+          "kb-backend-gen-001",
+          "kb-agent-agent-006"
+        ],
+        "sim": 0.524
+      },
+      {
+        "q": "大促当天看板要秒级刷新，整个链路怎么搭",
+        "kind": "paraphrase",
+        "ok": true,
+        "top1": true,
+        "confidence": "low",
+        "top3": [
+          "kb-bigdata-gen-001",
+          "kb-agent-agent-001",
+          "kb-backend-gen-002"
+        ],
+        "sim": 0.592
+      },
+      {
+        "q": "按时间把数据流切开，有几种切法",
+        "kind": "paraphrase",
+        "ok": false,
+        "top1": false,
+        "confidence": "low",
+        "top3": [
+          "kb-agent-agent-006",
+          "kb-agent-gen-004",
+          "kb-backend-gen-001"
+        ],
+        "sim": 0.549
+      },
+      {
+        "q": "面试官问我消息丢了怎么办",
+        "kind": "paraphrase",
+        "ok": true,
+        "top1": true,
+        "confidence": "mid",
+        "top3": [
+          "kb-bigdata-kafka-002",
+          "kb-backend-gen-002",
+          "kb-bigdata-gen-003"
+        ],
+        "sim": 0.693
+      },
+      {
+        "q": "消息既不能丢也不能重，怎么做到刚好一次",
+        "kind": "distractor",
+        "ok": true,
+        "top1": true,
+        "confidence": "mid",
+        "top3": [
+          "kb-bigdata-kafka-002",
+          "kb-agent-agent-006",
+          "kb-agent-gen-004"
+        ],
+        "sim": 0.722
+      },
+      {
+        "q": "数据分布不均导致少数机器特别忙",
+        "kind": "distractor",
+        "ok": false,
+        "top1": false,
+        "confidence": "low",
+        "top3": [
+          "kb-bigdata-flink-003",
+          "kb-backend-gen-001",
+          "kb-bigdata-gen-002"
+        ],
+        "sim": 0.526
+      },
+      {
+        "q": "如何定位任务里的热点key",
+        "kind": "distractor",
+        "ok": true,
+        "top1": true,
+        "confidence": "mid",
+        "top3": [
+          "kb-bigdata-flink-002",
+          "kb-bigdata-gen-003",
+          "kb-backend-gen-002"
+        ],
+        "sim": 0.678
+      },
+      {
+        "q": "Redis 断电后数据怎么恢复",
+        "kind": "distractor",
+        "ok": false,
+        "top1": false,
+        "confidence": "low",
+        "top3": [
+          "kb-bigdata-flink-003",
+          "kb-agent-agent-006",
+          "kb-bigdata-gen-002"
+        ],
+        "sim": 0.546
+      },
+      {
+        "q": "Memory怎么做的?怎么插入上下文?怎",
+        "kind": "covered",
+        "ok": true,
+        "top1": true,
+        "confidence": "high",
+        "top3": [
+          "kb-agent-agent-006",
+          "kb-backend-gen-001",
+          "kb-agent-gen-004"
+        ],
+        "sim": 0.787
+      },
+      {
+        "q": "Spark shuffle 的几种实现与",
+        "kind": "covered",
+        "ok": true,
+        "top1": true,
+        "confidence": "high",
+        "top3": [
+          "kb-bigdata-sparkshu-001",
+          "kb-bigdata-gen-003",
+          "kb-agent-agent-001"
+        ],
+        "sim": 0.759
+      },
+      {
+        "q": "数仓分层怎么设计的，分层依据是什么？",
+        "kind": "covered",
+        "ok": true,
+        "top1": true,
+        "confidence": "high",
+        "top3": [
+          "kb-bigdata-gen-002",
+          "kb-bigdata-gen-001",
+          "kb-agent-agent-006"
+        ],
+        "sim": 0.856
+      },
+      {
+        "q": "模型的幻觉产生原因是什么?怎么减少?",
+        "kind": "covered",
+        "ok": true,
+        "top1": true,
+        "confidence": "high",
+        "top3": [
+          "kb-agent-llm-001",
+          "kb-agent-agent-004",
+          "kb-agent-gen-004"
+        ],
+        "sim": 0.882
+      },
+      {
+        "q": "Agent 项目的核心架构是怎么样的?",
+        "kind": "covered",
+        "ok": true,
+        "top1": true,
+        "confidence": "high",
+        "top3": [
+          "kb-agent-agent-001",
+          "kb-backend-gen-002",
+          "kb-agent-mcpskill-001"
+        ],
+        "sim": 0.787
+      }
+    ],
+    "gap_details": [
+      {
+        "q": "手写一道 SQL，窗口函数 over p",
+        "confidence": "mid",
+        "sim": 0.616,
+        "false_confident": false
+      },
+      {
+        "q": "为什么不直接用Claude Code或公",
+        "confidence": "low",
+        "sim": 0.527,
+        "false_confident": false
+      },
+      {
+        "q": "Plan &Execute 和 ReAc",
+        "confidence": "low",
+        "sim": 0.541,
+        "false_confident": false
+      },
+      {
+        "q": "Agent死循环问题怎么解决?",
+        "confidence": "low",
+        "sim": 0.577,
+        "false_confident": false
+      },
+      {
+        "q": "Multi-Agent中各Agent怎么",
+        "confidence": "mid",
+        "sim": 0.624,
+        "false_confident": false
+      }
+    ]
+  },
+  "retrieval": {
+    "fts": {
+      "cases": 19,
+      "hit5": 0.789,
+      "mrr": 0.623,
+      "by_kind": {
+        "covered": {
+          "cases": 5,
+          "hit5": 1.0,
+          "mrr": 0.867
+        },
+        "distractor": {
+          "cases": 4,
+          "hit5": 0.75,
+          "mrr": 0.583
+        },
+        "keyword": {
+          "cases": 4,
+          "hit5": 1.0,
+          "mrr": 0.833
+        },
+        "paraphrase": {
+          "cases": 6,
+          "hit5": 0.5,
+          "mrr": 0.306
+        }
+      },
+      "details": [
+        {
+          "q": "消息可靠性 不丢失 数据重复消费",
+          "kind": "keyword",
+          "top3": [
+            "kb-agent-agent-001",
+            "kb-agent-gen-004",
+            "kb-bigdata-kafka-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "滚动窗口 滑动窗口 会话窗口区别",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-flink-001",
+            "kb-agent-agent-004",
+            "kb-agent-agent-006"
+          ],
+          "ok": true
+        },
+        {
+          "q": "实时数仓 埋点日志 看板 PV UV",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-gen-001",
+            "kb-bigdata-gen-002",
+            "kb-backend-gen-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "RDB AOF 区别",
+          "kind": "keyword",
+          "top3": [
+            "kb-backend-redis-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "进程挂了内存里的东西还能找回来吗",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-agent-agent-001"
+          ],
+          "ok": false
+        },
+        {
+          "q": "消费者重启之后怎么找回上次读到哪了",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-gen-001",
+            "kb-agent-agent-006",
+            "kb-bigdata-kafka-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "同一个用户的数据全挤到一台机器上怎么办",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-agent-mcpskill-001",
+            "kb-bigdata-gen-002",
+            "kb-agent-agent-006"
+          ],
+          "ok": false
+        },
+        {
+          "q": "大促当天看板要秒级刷新，整个链路怎么搭",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-gen-001",
+            "kb-bigdata-gen-002",
+            "kb-backend-gen-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "按时间把数据流切开，有几种切法",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-gen-003",
+            "kb-backend-gen-001",
+            "kb-agent-gen-004"
+          ],
+          "ok": false
+        },
+        {
+          "q": "面试官问我消息丢了怎么办",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-gen-003",
+            "kb-bigdata-kafka-002",
+            "kb-agent-agent-006"
+          ],
+          "ok": true
+        },
+        {
+          "q": "消息既不能丢也不能重，怎么做到刚好一次",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-agent-agent-006",
+            "kb-backend-gen-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "数据分布不均导致少数机器特别忙",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-gen-003",
+            "kb-bigdata-flink-003",
+            "kb-bigdata-flink-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "如何定位任务里的热点key",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-flink-002",
+            "kb-bigdata-gen-003",
+            "kb-bigdata-flink-003"
+          ],
+          "ok": true
+        },
+        {
+          "q": "Redis 断电后数据怎么恢复",
+          "kind": "distractor",
+          "top3": [
+            "kb-agent-agent-001",
+            "kb-backend-gen-001",
+            "kb-backend-gen-002"
+          ],
+          "ok": false
+        },
+        {
+          "q": "Memory怎么做的?怎么插入上下文?怎",
+          "kind": "covered",
+          "top3": [
+            "kb-agent-agent-006",
+            "kb-bigdata-gen-002",
+            "kb-backend-gen-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "Spark shuffle 的几种实现与",
+          "kind": "covered",
+          "top3": [
+            "kb-bigdata-sparkshu-001",
+            "kb-bigdata-gen-003",
+            "kb-agent-agent-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "数仓分层怎么设计的，分层依据是什么？",
+          "kind": "covered",
+          "top3": [
+            "kb-bigdata-gen-002",
+            "kb-bigdata-gen-001",
+            "kb-cs-rag-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "模型的幻觉产生原因是什么?怎么减少?",
+          "kind": "covered",
+          "top3": [
+            "kb-agent-llm-001",
+            "kb-agent-agent-004",
+            "kb-cs-rag-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "Agent 项目的核心架构是怎么样的?",
+          "kind": "covered",
+          "top3": [
+            "kb-agent-mcpskill-001",
+            "kb-backend-gen-002",
+            "kb-agent-agent-001"
+          ],
+          "ok": true
+        }
+      ]
+    },
+    "hybrid": {
+      "cases": 19,
+      "hit5": 0.737,
+      "mrr": 0.702,
+      "by_kind": {
+        "covered": {
+          "cases": 5,
+          "hit5": 1.0,
+          "mrr": 1.0
+        },
+        "distractor": {
+          "cases": 4,
+          "hit5": 0.5,
+          "mrr": 0.5
+        },
+        "keyword": {
+          "cases": 4,
+          "hit5": 1.0,
+          "mrr": 1.0
+        },
+        "paraphrase": {
+          "cases": 6,
+          "hit5": 0.5,
+          "mrr": 0.389
+        }
+      },
+      "details": [
+        {
+          "q": "消息可靠性 不丢失 数据重复消费",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-agent-gen-004",
+            "kb-bigdata-gen-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "滚动窗口 滑动窗口 会话窗口区别",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-flink-001",
+            "kb-agent-agent-004",
+            "kb-agent-mcpskill-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "实时数仓 埋点日志 看板 PV UV",
+          "kind": "keyword",
+          "top3": [
+            "kb-bigdata-gen-001",
+            "kb-bigdata-gen-002",
+            "kb-backend-gen-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "RDB AOF 区别",
+          "kind": "keyword",
+          "top3": [
+            "kb-backend-redis-001",
+            "kb-agent-mcpskill-001",
+            "kb-bigdata-flink-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "进程挂了内存里的东西还能找回来吗",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-agent-agent-001",
+            "kb-agent-gen-004",
+            "kb-bigdata-gen-001"
+          ],
+          "ok": false
+        },
+        {
+          "q": "消费者重启之后怎么找回上次读到哪了",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-gen-001",
+            "kb-agent-agent-006",
+            "kb-bigdata-kafka-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "同一个用户的数据全挤到一台机器上怎么办",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-gen-002",
+            "kb-backend-gen-001",
+            "kb-agent-agent-006"
+          ],
+          "ok": false
+        },
+        {
+          "q": "大促当天看板要秒级刷新，整个链路怎么搭",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-gen-001",
+            "kb-agent-agent-001",
+            "kb-backend-gen-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "按时间把数据流切开，有几种切法",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-agent-agent-006",
+            "kb-agent-gen-004",
+            "kb-backend-gen-001"
+          ],
+          "ok": false
+        },
+        {
+          "q": "面试官问我消息丢了怎么办",
+          "kind": "paraphrase",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-backend-gen-002",
+            "kb-bigdata-gen-003"
+          ],
+          "ok": true
+        },
+        {
+          "q": "消息既不能丢也不能重，怎么做到刚好一次",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-kafka-002",
+            "kb-agent-agent-006",
+            "kb-agent-gen-004"
+          ],
+          "ok": true
+        },
+        {
+          "q": "数据分布不均导致少数机器特别忙",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-flink-003",
+            "kb-backend-gen-001",
+            "kb-bigdata-gen-002"
+          ],
+          "ok": false
+        },
+        {
+          "q": "如何定位任务里的热点key",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-flink-002",
+            "kb-bigdata-gen-003",
+            "kb-backend-gen-002"
+          ],
+          "ok": true
+        },
+        {
+          "q": "Redis 断电后数据怎么恢复",
+          "kind": "distractor",
+          "top3": [
+            "kb-bigdata-flink-003",
+            "kb-agent-agent-006",
+            "kb-bigdata-gen-002"
+          ],
+          "ok": false
+        },
+        {
+          "q": "Memory怎么做的?怎么插入上下文?怎",
+          "kind": "covered",
+          "top3": [
+            "kb-agent-agent-006",
+            "kb-backend-gen-001",
+            "kb-agent-gen-004"
+          ],
+          "ok": true
+        },
+        {
+          "q": "Spark shuffle 的几种实现与",
+          "kind": "covered",
+          "top3": [
+            "kb-bigdata-sparkshu-001",
+            "kb-bigdata-gen-003",
+            "kb-agent-agent-001"
+          ],
+          "ok": true
+        },
+        {
+          "q": "数仓分层怎么设计的，分层依据是什么？",
+          "kind": "covered",
+          "top3": [
+            "kb-bigdata-gen-002",
+            "kb-bigdata-gen-001",
+            "kb-agent-agent-006"
+          ],
+          "ok": true
+        },
+        {
+          "q": "模型的幻觉产生原因是什么?怎么减少?",
+          "kind": "covered",
+          "top3": [
+            "kb-agent-llm-001",
+            "kb-agent-agent-004",
+            "kb-agent-gen-004"
+          ],
+          "ok": true
+        },
+        {
+          "q": "Agent 项目的核心架构是怎么样的?",
+          "kind": "covered",
+          "top3": [
+            "kb-agent-agent-001",
+            "kb-backend-gen-002",
+            "kb-agent-mcpskill-001"
+          ],
+          "ok": true
+        }
+      ]
+    }
+  }
+}

@@ -3,7 +3,8 @@ id: kb-bigdata-sparkshu-001
 domain: bigdata
 topic: Spark Shuffle
 title: Spark shuffle 的几种实现与区别？
-mastery: 0
+status: active
+mastery: 0.0
 srs_due: ""
 tags: ["Spark", "Shuffle", "SortShuffle", "HashShuffle", "性能调优"]
 related: []
@@ -27,6 +28,8 @@ updated: 2026-10-31
 - shuffle 数据落盘路径由 spark.local.dir 指定，要配多块盘并避免和日志盘混用；shuffle service（如 YARN 的 ExternalShuffleService）负责在 executor 释放后仍能提供数据，开启动态资源分配时必须开启。
 - 调优手段包括：用 reduceByKey 替代 groupByKey 减少网络传输、map 端预聚合（combine）、开启 spark.shuffle.compress 压缩、适当增大 spark.shuffle.file.buffer 和 spark.reducer.maxSizeInFlight 提升 IO 与拉取效率。
 - 权衡点：SortShuffle 通用但排序有 CPU 开销，bypass 模式省排序但不支持聚合且 reduce 数大时退化为普通模式；HashShuffle 写快但文件多，只适合 map/reduce 数都很小的场景。
+- Sort Shuffle 在 map 端只做 partition 级排序，不是全局有序；要全局有序得另加 sortByKey 或 RangePartitioner。
+- Tungsten Sort Shuffle 用 UnsafeRow 二进制格式 + 堆外内存，省掉序列化与对象开销，是 Sort Shuffle 的性能优化版。
 
 ## 易错
 

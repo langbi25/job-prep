@@ -101,6 +101,20 @@ Agent 有没有真完成任务**。没有这层，改 prompt / 调检索参数�
 所以工具只透出 `similarity` + `confidence`（high/mid/low/none），由模型对着
 要点自己判断"这是答案还是只是同主题"——这正是把内容而不只是 id 交给它的意义。
 
+### 用例会随数据迁移，别让标签骗自己
+
+`tool_gap_cases.jsonl` 原先那 5 条（Memory / Spark shuffle / 数仓分层 / 幻觉 / Agent 架构）
+是 2026-10-27 标的"高频无卡题"。到 10-31 这 5 道题全建了卡，`search_kb` 也都能把它们召回到
+第一位——继续当 gap 用例，等于把"建卡成功"记成"误标高置信"（`gap_false_confident` 一路报 5）。
+
+所以 10-31 做了一次用例迁移：
+- 那 5 条转入 `retrieval_cases.jsonl`，`kind=covered`，期望卡取建卡时记死的硬关联（1.0 把握）；
+- gap 集换成 5 道**确实没卡**的题（手写 SQL 窗口函数、Claude Code 选型、Plan&Execute vs ReAct、
+  Agent 死循环、Multi-Agent 通信），标注前逐条确认 `_match_card` 返回 None。
+
+迁移后：检索集 14 → 19 例，`hit3` 0.737、`gap_false_confident` 归零。
+**用例增长会让历史分数不可直接比**，比分数更该看的是剩下没命中的那几条是什么类型。
+
 ## 三·六、提取判定为什么也要评
 
 提取阶段除了抽题面，还要判三件事：材料是面经还是单题摘录、这道题有没有带答案、

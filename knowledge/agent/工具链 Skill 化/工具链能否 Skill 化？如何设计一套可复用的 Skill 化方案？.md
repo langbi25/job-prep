@@ -10,6 +10,7 @@ related: []
 source: agent
 created: 2026-10-30
 updated: 2026-10-30
+status: archived
 ---
 
 # 工具链能否 Skill 化？如何设计一套可复用的 Skill 化方案？

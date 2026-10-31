@@ -10,6 +10,8 @@ related: []
 source: agent
 created: 2026-10-31
 updated: 2026-10-31
+merged_into: kb-bigdata-sparkshu-001
+status: archived
 ---
 
 # Spark shuffle 的几种实现与区别？
