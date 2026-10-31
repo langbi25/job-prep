@@ -314,18 +314,62 @@ def list_actions(status: str | None = "pending") -> list[dict]:
 def _archive_card(conn, card_id: str) -> dict:
     """归档卡片：status 置 archived + 删向量 + 同步 md frontmatter。
 
-    两个容易漏的点：
+    三个容易漏的点：
     1) embeddings 表不随 status 走，只改 status 的话归档卡会继续从 hybrid
        检索的向量路里冒出来（FTS 路有 status 过滤，向量路没有）；
-    2) md 是事实源，不同步 frontmatter 的话，空库重新 sync 时归档卡会复活。
+    2) md 是事实源，不同步 frontmatter 的话，空库重新 sync 时归档卡会复活；
+    3) 若干张卡可能共用一个 md（同 topic + 同 title 时 rel_path 完全相同，
+       重复建卡就是这么写的）。这时改 frontmatter 等于把别的活卡也标成归档，
+       所以只有「这个文件没有别的活卡在用」才动它。
     """
     row = conn.execute("SELECT file_path FROM kb_cards WHERE id=?", (card_id,)).fetchone()
     if not row:
         raise ValueError(f"卡片不存在: {card_id}")
     conn.execute("UPDATE kb_cards SET status='archived' WHERE id=?", (card_id,))
     conn.execute("DELETE FROM embeddings WHERE entity_type='card' AND entity_id=?", (card_id,))
-    kb_service.update_md_meta(row["file_path"], {"status": "archived"})
+    if not _shared_md(conn, row["file_path"], card_id):
+        kb_service.update_md_meta(row["file_path"], {"status": "archived"})
     return {"archived": card_id}
+
+
+def _shared_md(conn, file_path: str, exclude_id: str) -> bool:
+    """这个 md 还有没有别的 active 卡在用。
+
+    重复建卡会算出同一个 rel_path（domain/topic/title 全同），于是多行共用一个文件。
+    共用时改 md 会误伤——归档 A 却把 B 的 frontmatter 写成 archived。
+    """
+    n = conn.execute(
+        "SELECT COUNT(*) AS n FROM kb_cards WHERE file_path=? AND id!=? AND status='active'",
+        (file_path, exclude_id)).fetchone()["n"]
+    return n > 0
+
+
+def _transfer_question_links(conn, dup: str, keeper: str) -> int:
+    """把指向重复卡的题目关联改挂到保留卡。返回改动题数。
+
+    为什么必须搬：覆盖统计的硬关联这条路（_linked_card）只认 status='active' 的卡。
+    重复卡归档后，只连着它的题目会瞬间变回「无卡」——去重反而制造了假缺口。
+    """
+    moved = 0
+    rows = conn.execute(
+        "SELECT id, related_card_ids_json FROM question_pool WHERE related_card_ids_json LIKE ?",
+        (f"%{dup}%",)).fetchall()
+    for r in rows:
+        try:
+            ids = json.loads(r["related_card_ids_json"] or "[]")
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(ids, list) or dup not in ids:
+            continue
+        new_ids: list[str] = []
+        for cid in ids:
+            cid = keeper if cid == dup else cid
+            if cid not in new_ids:
+                new_ids.append(cid)
+        conn.execute("UPDATE question_pool SET related_card_ids_json=? WHERE id=?",
+                     (json.dumps(new_ids, ensure_ascii=False), r["id"]))
+        moved += 1
+    return moved
 
 
 def _merge_card(conn, payload: dict) -> dict:
@@ -350,13 +394,16 @@ def _merge_card(conn, payload: dict) -> dict:
     if k["status"] != "active":
         raise ValueError(f"保留卡不是 active 状态: {keeper}，请先换一张保留卡")
 
-    result = _archive_card(conn, dup)
+    _archive_card(conn, dup)
     conn.execute("UPDATE kb_cards SET merged_into=? WHERE id=?", (keeper, dup))
     conn.execute(
         "UPDATE kb_cards SET mastery=MAX(mastery,?), review_count=review_count+? WHERE id=?",
         (d["mastery"], d["review_count"], keeper))
-    kb_service.update_md_meta(d["file_path"], {"status": "archived", "merged_into": keeper})
-    return {"merged": dup, "into": keeper,
+    # 共用同一个 md 时不能写 merged_into —— 那是保留卡的文件
+    if d["file_path"] != k["file_path"]:
+        kb_service.update_md_meta(d["file_path"], {"merged_into": keeper})
+    linked = _transfer_question_links(conn, dup, keeper)
+    return {"merged": dup, "into": keeper, "linked_questions": linked,
             "carried_mastery": d["mastery"], "carried_reviews": d["review_count"]}
 
 

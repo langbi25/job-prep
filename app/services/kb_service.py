@@ -67,9 +67,13 @@ def card_to_md(c: sqlite3.Row | dict) -> str:
     points = "\n".join(f"- {x}" for x in json.loads(points_raw)) or "- （待补充）"
     pitfalls = "\n".join(f"- {x}" for x in json.loads(pitfalls_raw)) or "- （无）"
     tags_val = json.loads(c["tags_json"]) if isinstance(c["tags_json"], str) else c.get("tags", [])
+    # status 必须写进 frontmatter：md 是事实源，不写的话下次 update_card_content 重写
+    # 会把归档标记抹掉（card_to_md 是整段重建 frontmatter，不是合并）。
+    status_val = (c["status"] if "status" in c.keys() else None) or "active"
     front = (
         "---\n"
         f"id: {c['id']}\ndomain: {c['domain']}\ntopic: {c['topic']}\ntitle: {c['title']}\n"
+        f"status: {status_val}\n"
         f"mastery: {c['mastery']}\nsrs_due: \"{c['srs_due'] or ''}\"\n"
         f"tags: {json.dumps(tags_val, ensure_ascii=False)}\nrelated: []\nsource: {c['source_type']}\n"
         f"created: {c['created_at'][:10]}\nupdated: {c['updated_at'][:10]}\n---\n\n"
@@ -78,11 +82,30 @@ def card_to_md(c: sqlite3.Row | dict) -> str:
     return front + body
 
 
+def _free_path(domain: str, topic: str, title: str, cid: str) -> str:
+    """给新卡找一个不会覆盖别人的 md 路径。
+
+    domain/topic/title 三者相同就算出同一个 rel_path，两张卡会写同一个文件——
+    后写的赢，前一张的 md 直接消失（库里还有行，但事实源没了）。
+    撞名时把卡号缀进文件名，保证「一行卡 ↔ 一个 md」。
+    """
+    base = f"{domain}/{_safe_name(topic)}/{_safe_name(title)}"
+    rel = f"{base}.md"
+    if not (config.KB_DIR / rel).exists():
+        return rel
+    rel = f"{base} ({cid}).md"
+    n = 2
+    while (config.KB_DIR / rel).exists():
+        rel = f"{base} ({cid}-{n}).md"
+        n += 1
+    return rel
+
+
 def create_card(data: dict) -> dict:
     conn = get_conn()
     try:
         cid = _next_card_id(conn, data["domain"], data["topic"])
-        rel_path = f"{data['domain']}/{_safe_name(data['topic'])}/{_safe_name(data['title'])}.md"
+        rel_path = _free_path(data["domain"], data["topic"], data["title"], cid)
         card = {
             "id": cid, "domain": data["domain"], "topic": data["topic"], "title": data["title"],
             "question": data.get("question", ""), "points_json": json.dumps(data.get("points", []), ensure_ascii=False),
@@ -90,19 +113,29 @@ def create_card(data: dict) -> dict:
             "related_json": "[]", "tags_json": json.dumps(data.get("tags", []), ensure_ascii=False),
             "source_type": data.get("source_type", "manual"), "source_ref": None,
             "file_path": rel_path, "mastery": 0, "review_count": 0, "last_review_at": None,
-            "srs_due": None, "created_at": now(), "updated_at": now(),
+            "srs_due": None, "status": "active", "created_at": now(), "updated_at": now(),
         }
-        conn.execute(
-            "INSERT INTO kb_cards (id,domain,topic,title,question,points_json,pitfalls_json,related_json,"
-            "tags_json,source_type,source_ref,file_path,mastery,review_count,last_review_at,srs_due,status,created_at,updated_at) "
-            "VALUES (:id,:domain,:topic,:title,:question,:points_json,:pitfalls_json,:related_json,"
-            ":tags_json,:source_type,:source_ref,:file_path,:mastery,:review_count,:last_review_at,:srs_due,'active',:created_at,:updated_at)",
-            card,
-        )
-        conn.commit()
+        # 顺序是「先 md 后库」，别反过来。md 是事实源：md 写成功、插库失败时，
+        # 多一个 md 是**可修复**的（下次启动 sync_all() 会把它收编回来）；
+        # 反过来先插库再写 md 失败，库里就留下一行指向不存在文件的卡——
+        # sync_all() 是 md→db 单向，补不了这个方向的缺口，那行卡永远读不到内容。
         path = config.KB_DIR / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(card_to_md(card), encoding="utf-8")
+        try:
+            conn.execute(
+                "INSERT INTO kb_cards (id,domain,topic,title,question,points_json,pitfalls_json,related_json,"
+                "tags_json,source_type,source_ref,file_path,mastery,review_count,last_review_at,srs_due,status,created_at,updated_at) "
+                "VALUES (:id,:domain,:topic,:title,:question,:points_json,:pitfalls_json,:related_json,"
+                ":tags_json,:source_type,:source_ref,:file_path,:mastery,:review_count,:last_review_at,:srs_due,:status,:created_at,:updated_at)",
+                card,
+            )
+            conn.commit()
+        except Exception:
+            # 插库失败就把刚写的 md 删掉，别留孤儿文件让 sync_all 又收编成一张空卡
+            conn.rollback()
+            path.unlink(missing_ok=True)
+            raise
         card["points"] = json.loads(card["points_json"])
         card["pitfalls"] = json.loads(card["pitfalls_json"])
         card["tags"] = json.loads(card["tags_json"])

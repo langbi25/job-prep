@@ -1,5 +1,6 @@
 .env
 data/kb.sqlite
+data/_backup/
 __pycache__/
 .venv/
 reports/
