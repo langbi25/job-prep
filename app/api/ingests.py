@@ -51,11 +51,10 @@ def extract(ingest_id: str):
 
 @router.get("/{ingest_id}")
 def get_ingest(ingest_id: str):
-    rows = ingest_service.list_ingests()
-    for r in rows:
-        if r["id"] == ingest_id:
-            return r
-    raise HTTPException(404, "采集记录不存在")
+    try:
+        return ingest_service.ingest_detail(ingest_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
 
 
 @router.post("/{ingest_id}/confirm")

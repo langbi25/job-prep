@@ -296,6 +296,112 @@ def confirm_ingest(ingest_id: str, payload: dict) -> dict:
         conn.close()
 
 
+def _read_raw(row: sqlite3.Row) -> tuple[str, str | None]:
+    """读原文。raw_path 记的是 pending/xxx.md，但确认后文件已被搬到 archived/，
+    DB 里的路径不会跟着改——所以两个位置都要找，找不到就如实返回空。"""
+    rel = str(row["raw_path"])
+    cands = [config.INBOX_DIR / rel]
+    if rel.startswith("pending/"):
+        cands.append(config.INBOX_DIR / rel.replace("pending", "archived", 1))
+    for p in cands:
+        if p.exists():
+            return p.read_text(encoding="utf-8"), p.parent.name
+    return "", None
+
+
+def ingest_detail(ingest_id: str) -> dict:
+    """单次采集的全链路详情：抽取判定 → 进了哪些题（新建/合并）→ 写了哪些答案 → 起了哪些卡。
+
+    为什么要单独一个接口：列表只给"7 题 · 完整 7"这种聚合数字，一旦出问题
+    （这次怎么一题都没进池？答案怎么没存上？卡怎么没起草？）必须能一眼看出断在哪一步。
+    所以这里把 ingests / feed_interviews / question_occurrences / question_pool /
+    agent_actions 五张表按这一次采集串起来，前端就不需要自己拼。
+    """
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT * FROM ingests WHERE id=?", (ingest_id,)).fetchone()
+        if not row:
+            raise ValueError(f"ingest {ingest_id} 不存在")
+        d = dict(row)
+        ex = json.loads(d.pop("extracted_json") or "{}") if d.get("extracted_json") else {}
+        d["extracted"] = ex
+        d["judgement"] = ex.get("judgement") or {}
+
+        raw_text, raw_dir = _read_raw(row)
+        d["raw_text"] = raw_text
+        d["raw_dir"] = raw_dir          # pending / archived / None(文件丢了)
+        d["raw_chars"] = len(raw_text)
+
+        fi = conn.execute("SELECT * FROM feed_interviews WHERE ingest_id=?", (ingest_id,)).fetchone()
+        d["interview"] = dict(fi) if fi else None
+
+        questions: list[dict] = []
+        if fi:
+            rows = conn.execute(
+                "SELECT o.ask_order, o.raw_text, o.question_id, q.text, q.qtype, q.topic, "
+                "       q.freq_count, q.answer_completeness, q.answer_points_json, q.merged_into, "
+                "       (SELECT o2.interview_id FROM question_occurrences o2 "
+                "         WHERE o2.question_id = o.question_id ORDER BY o2.rowid LIMIT 1) AS first_iv "
+                "FROM question_occurrences o LEFT JOIN question_pool q ON q.id = o.question_id "
+                "WHERE o.interview_id=? ORDER BY o.ask_order", (fi["id"],)).fetchall()
+
+            # 卡片动作是按 question_id 存的 JSON，表很小（几十行），直接扫比 LIKE 拼串可靠
+            acts: dict[str, list] = {}
+            for a in conn.execute("SELECT * FROM agent_actions WHERE kind='create_card'"):
+                try:
+                    p = json.loads(a["payload_json"])
+                except (ValueError, TypeError):
+                    continue
+                qid = p.get("question_id")
+                if not qid:
+                    continue
+                acts.setdefault(qid, []).append({
+                    "action_id": a["id"], "status": a["status"],
+                    "low_risk": bool(p.get("low_risk")), "origin": p.get("origin") or "agent",
+                    "title": p.get("title"), "n_points": len(p.get("points") or []),
+                    "card_id": (json.loads(a["result_json"]).get("card_id")
+                                if a["result_json"] else None),
+                    "created_at": a["created_at"],
+                })
+
+            for r in rows:
+                pts = []
+                try:
+                    pts = json.loads(r["answer_points_json"] or "[]")
+                except (ValueError, TypeError):
+                    pts = []
+                questions.append({
+                    "ask_order": r["ask_order"],
+                    "question_id": r["question_id"],
+                    "text": r["text"] or r["raw_text"],
+                    "qtype": r["qtype"],
+                    "topic": r["topic"],
+                    "freq_count": r["freq_count"],
+                    "answer_completeness": r["answer_completeness"],
+                    "answer_points": pts,
+                    "merged_into": r["merged_into"],
+                    # first_iv == 本次面经 → 这道题是这次采集首见（新题），否则是并到老题上
+                    "is_new": (r["first_iv"] == fi["id"]) if r["first_iv"] else None,
+                    "cards": acts.get(r["question_id"], []),
+                })
+        d["questions"] = questions
+
+        q_with_ans = sum(1 for q in questions if q["answer_points"])
+        created = sum(1 for q in questions for c in q["cards"] if c["card_id"])
+        pending = sum(1 for q in questions for c in q["cards"] if c["status"] == "pending")
+        d["summary"] = {
+            "n_questions": len(questions),
+            "n_new": sum(1 for q in questions if q["is_new"]),
+            "n_merged": sum(1 for q in questions if q["is_new"] is False),
+            "n_with_answer": q_with_ans,
+            "n_cards_created": created,
+            "n_cards_pending": pending,
+        }
+        return d
+    finally:
+        conn.close()
+
+
 def discard_ingest(ingest_id: str) -> dict:
     conn = get_conn()
     try:

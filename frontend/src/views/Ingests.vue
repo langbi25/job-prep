@@ -23,7 +23,12 @@
     </el-tabs>
 
     <el-table :data="rows" v-loading="loading" style="width: 100%">
-      <el-table-column prop="id" label="ID" width="170" />
+      <el-table-column prop="id" label="ID" width="185">
+        <template #default="{ row }">
+          <el-link type="primary" :underline="false" title="点击查看这次采集的完整详情"
+                   @click="openDetail(row.id)">{{ row.id }}</el-link>
+        </template>
+      </el-table-column>
       <el-table-column prop="source_type" label="来源" width="80" />
       <el-table-column prop="status" label="状态" width="100">
         <template #default="{ row }">
@@ -141,6 +146,127 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 单次采集详情：抽取判定 → 题目去向 → 答案 → 卡片，一条链路看到底 -->
+    <el-drawer v-model="detailOpen" size="64%" :title="`采集详情 · ${detail?.id || ''}`">
+      <div v-loading="detailLoading">
+        <template v-if="detail">
+          <el-alert v-if="detail.status === 'failed'" type="error" :closable="false" show-icon
+                    style="margin-bottom: 10px" :title="`抽取失败：${detail.error || '未知原因'}`" />
+
+          <el-descriptions :column="3" size="small" border>
+            <el-descriptions-item label="状态">
+              <el-tag size="small" :type="statusType(detail.status)">{{ statusText(detail.status) }}</el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="来源">
+              {{ detail.source_type }}<span v-if="detail.source_site"> / {{ detail.source_site }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="投喂时间">{{ detail.created_at }}</el-descriptions-item>
+            <el-descriptions-item label="面经 ID">{{ detail.interview?.id || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="公司 / 岗位">
+              {{ detail.interview?.company || detail.extracted?.company || '—' }}
+              <span v-if="detail.interview?.position || detail.extracted?.position">
+                / {{ detail.interview?.position || detail.extracted?.position }}
+              </span>
+            </el-descriptions-item>
+            <el-descriptions-item label="原文">
+              {{ detail.raw_chars }} 字
+              <span :style="{ color: detail.raw_dir ? '#909399' : '#f56c6c' }">
+                （{{ detail.raw_dir === 'archived' ? '已归档' : detail.raw_dir === 'pending' ? '待处理区' : '文件已丢失' }}）
+              </span>
+            </el-descriptions-item>
+          </el-descriptions>
+
+          <div v-if="detail.summary?.n_questions" class="sum-row">
+            <el-tag size="small" effect="plain">{{ docTypeText(detail.extracted?.doc_type) }}</el-tag>
+            <el-tag size="small" type="info" effect="plain">抽到 {{ detail.summary?.n_questions }} 题</el-tag>
+            <el-tag size="small" type="success" effect="plain">新题 {{ detail.summary?.n_new }}</el-tag>
+            <el-tag size="small" type="warning" effect="plain">并到老题 {{ detail.summary?.n_merged }}</el-tag>
+            <el-tag size="small" type="primary" effect="plain">带答案 {{ detail.summary?.n_with_answer }}</el-tag>
+            <el-tag size="small" effect="plain">已建卡 {{ detail.summary?.n_cards_created }}</el-tag>
+            <el-tag v-if="detail.summary?.n_cards_pending" size="small" type="warning">
+              待审批 {{ detail.summary?.n_cards_pending }}
+            </el-tag>
+          </div>
+
+          <template v-if="detail.questions?.length">
+            <h4>题目去向（{{ detail.questions.length }} 道）</h4>
+            <el-table :data="detail.questions" size="small" max-height="330">
+              <el-table-column type="expand">
+                <template #default="{ row }">
+                  <div class="ans-box">
+                    <div v-if="row.answer_points?.length">
+                      <b>参考答案要点（写入题目池，模拟面试评分时会用到）</b>
+                      <ul class="pts"><li v-for="(p, i) in row.answer_points" :key="i">{{ p }}</li></ul>
+                    </div>
+                    <div v-else class="muted">本次没有为这道题写入参考答案</div>
+                    <div v-if="row.cards?.length" style="margin-top:6px">
+                      <b>建卡动作</b>
+                      <div v-for="c in row.cards" :key="c.action_id" style="margin-top:2px">
+                        <el-tag size="small" :type="c.low_risk ? 'success' : 'warning'" effect="plain">
+                          {{ c.low_risk ? '原文抽取' : '模型起草' }}
+                        </el-tag>
+                        <el-tag size="small" :type="c.status === 'approved' ? 'success' : c.status === 'pending' ? 'info' : 'danger'"
+                                style="margin-left:4px">{{ actionStatusText(c.status) }}</el-tag>
+                        <span class="muted" style="margin-left:6px">
+                          {{ c.n_points }} 条要点<template v-if="c.card_id"> → 卡片 {{ c.card_id }}</template>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column prop="ask_order" label="#" width="50" />
+              <el-table-column prop="text" label="题目" min-width="290" show-overflow-tooltip />
+              <el-table-column label="答案" width="100">
+                <template #default="{ row }">
+                  <el-tag size="small" effect="light" :type="compType(row.answer_completeness)">
+                    {{ compText(row.answer_completeness) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="去向" width="150">
+                <template #default="{ row }">
+                  <el-tag v-if="row.is_new" size="small" type="success" effect="plain">新题 {{ row.question_id }}</el-tag>
+                  <el-tag v-else-if="row.merged_into" size="small" type="info" effect="plain">已并入 {{ row.merged_into }}</el-tag>
+                  <el-tag v-else size="small" type="info" effect="plain">并到 {{ row.question_id }}（第 {{ row.freq_count }} 次）</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="卡片" width="110">
+                <template #default="{ row }">
+                  <span v-if="!row.cards?.length" class="muted">—</span>
+                  <template v-else>
+                    <el-tag v-for="c in row.cards" :key="c.action_id" size="small"
+                            :type="c.card_id ? 'success' : 'warning'" effect="plain"
+                            style="margin-right:2px">
+                      {{ c.card_id ? '已建' : actionStatusText(c.status) }}
+                    </el-tag>
+                  </template>
+                </template>
+              </el-table-column>
+            </el-table>
+          </template>
+          <el-empty v-else-if="detail.status === 'confirmed'" :image-size="70"
+                    description="这次采集确认入库时一道题都没留下（可能全部取消勾选了）" />
+          <el-empty v-else-if="detail.status === 'pending'" :image-size="70"
+                    description="还没抽取，点右上角「提取」再看" />
+          <el-empty v-else-if="detail.status === 'discarded'" :image-size="70"
+                    description="这次采集已丢弃，没有题目入库（原文仍在 archived/）" />
+          <el-empty v-else :image-size="70" description="没有题目记录" />
+
+          <el-collapse v-if="detail.raw_text" style="margin-top:14px">
+            <el-collapse-item :title="`原始内容（${detail.raw_chars} 字）`" name="raw">
+              <pre class="raw-body">{{ detail.raw_text }}</pre>
+            </el-collapse-item>
+          </el-collapse>
+        </template>
+      </div>
+      <template #footer>
+        <el-button @click="detailOpen = false">关闭</el-button>
+        <el-button v-if="detail && ['pending', 'failed'].includes(detail.status)" type="primary"
+                   :loading="busy === detail.id" @click="reExtract">重新提取</el-button>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
@@ -162,6 +288,14 @@ const confirming = ref(false)
 const current = ref(null)
 const qlist = ref([])
 const meta = ref({ company: '', position: '', direction: '', round: '', interview_date: '' })
+
+const detailOpen = ref(false)
+const detailLoading = ref(false)
+const detail = ref(null)
+
+const actionStatusText = (s) => (
+  { pending: '待审批', approved: '已批准', rejected: '已驳回', failed: '失败' }[s] || s
+)
 
 const keptCount = computed(() => qlist.value.filter((q) => q.keep).length)
 const buildCount = computed(() => qlist.value.filter((q) => q.keep && q.build_card).length)
@@ -248,6 +382,29 @@ function openConfirm(row) {
 
 function toggleAll(v) { qlist.value.forEach((q) => { q.keep = v }) }
 
+async function openDetail(id) {
+  detailOpen.value = true
+  detailLoading.value = true
+  detail.value = null
+  try {
+    detail.value = await api.get(`/api/ingests/${id}`)
+  } finally { detailLoading.value = false }
+}
+
+async function reExtract() {
+  const id = detail.value?.id
+  if (!id) return
+  busy.value = id
+  try {
+    await api.post(`/api/ingests/${id}/extract`)
+    ElMessage.success('已重新提取')
+    await openDetail(id)
+    await load()
+    const row = rows.value.find((r) => r.id === id)
+    if (row) openConfirm(row)
+  } finally { busy.value = '' }
+}
+
 async function doConfirm() {
   confirming.value = true
   try {
@@ -290,4 +447,12 @@ onMounted(load)
 .ans-box { padding: 6px 12px 6px 48px; font-size: 12px; line-height: 1.7; }
 .ans-text { margin: 4px 0 0; white-space: pre-wrap; font-family: inherit; color: #606266; }
 .muted { color: #c0c4cc; }
+.sum-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 14px 0 4px; }
+.pts { padding-left: 18px; line-height: 1.8; margin: 4px 0; }
+h4 { margin: 16px 0 8px; font-size: 14px; }
+.raw-body {
+  background: #f5f7fa; padding: 10px 12px; border-radius: 6px;
+  font-size: 12px; line-height: 1.7; white-space: pre-wrap; word-break: break-word;
+  max-height: 360px; overflow: auto;
+}
 </style>
