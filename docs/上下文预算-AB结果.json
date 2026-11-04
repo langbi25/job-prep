@@ -1,0 +1,176 @@
+{
+  "budget": {
+    "window": 64000,
+    "capacity": 62464,
+    "usable": 12000,
+    "shares": {
+      "system": 0.15,
+      "retrieval": 0.25,
+      "history": 0.6
+    }
+  },
+  "long_session": {
+    "tokens": {
+      "full": [
+        901,
+        1789,
+        2677,
+        3565,
+        4444,
+        5332,
+        6220,
+        7108,
+        7996,
+        8875,
+        9763,
+        10651,
+        11539,
+        12427,
+        13306,
+        14194,
+        15082,
+        15970,
+        16858,
+        17737
+      ],
+      "naive6": [
+        901,
+        1789,
+        2677,
+        3565,
+        4444,
+        5332,
+        5327,
+        5327,
+        5327,
+        5318,
+        5327,
+        5327,
+        5327,
+        5327,
+        5318,
+        5327,
+        5327,
+        5327,
+        5327,
+        5318
+      ],
+      "ctx": [
+        62,
+        945,
+        1833,
+        2721,
+        3591,
+        4488,
+        5376,
+        6264,
+        7152,
+        7134,
+        7143,
+        7143,
+        7152,
+        7152,
+        7134,
+        7143,
+        7143,
+        7152,
+        7152,
+        7134
+      ]
+    },
+    "constraint_kept": {
+      "full": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "naive6": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
+      ],
+      "ctx": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  "tool_heavy": {
+    "naive": 17516,
+    "ctx": 7772,
+    "trimmed": 7,
+    "over": false
+  },
+  "calibration": {
+    "samples": [
+      {
+        "est": 32,
+        "real": 49,
+        "err_pct": -34.7
+      },
+      {
+        "est": 736,
+        "real": 658,
+        "err_pct": 11.9
+      },
+      {
+        "est": 1708,
+        "real": 1847,
+        "err_pct": -7.5
+      }
+    ],
+    "avg_err_pct": -10.1
+  }
+}

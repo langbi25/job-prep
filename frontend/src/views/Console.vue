@@ -69,6 +69,26 @@
             </div>
           </div>
 
+          <div v-if="m.ctx && m.ctx.total" class="ctxline">
+            <el-tooltip placement="top" :show-after="200">
+              <template #content>
+                <div class="ctxtip">
+                  system {{ m.ctx.sections.system }} · 摘要 {{ m.ctx.sections.summary }} ·
+                  检索 {{ m.ctx.sections.retrieval }} · 历史 {{ m.ctx.sections.history }} ·
+                  输入 {{ m.ctx.sections.user }}<br />
+                  丢弃旧消息 {{ m.ctx.dropped }} 条 · 锚定 {{ m.ctx.anchored }} 轮 ·
+                  检索命中 {{ m.ctx.retrieved_n }} 条
+                </div>
+              </template>
+              <span>
+                输入 {{ m.ctx.total }} / 预算 {{ m.ctx.budget }} tokens
+                <span v-if="m.ctx.summary_used"> · 含历史摘要</span>
+                <span v-if="m.ctx.degraded && m.ctx.degraded.length" class="deg">
+                  · 降级 {{ m.ctx.degraded.join(' / ') }}
+                </span>
+              </span>
+            </el-tooltip>
+          </div>
           <div v-if="arts(m).length" class="arts">
             <el-button v-for="a in arts(m)" :key="a.url" size="small" plain type="primary"
                        @click="go(a.url)">{{ a.label }} →</el-button>
@@ -209,7 +229,7 @@ async function send() {
     sessionId.value = res.session_id
     messages.value.push({
       role: 'assistant', content: res.reply, trace: res.trace || [],
-      mode: res.mode, created_at: new Date().toISOString(),
+      ctx: res.ctx || {}, mode: res.mode, created_at: new Date().toISOString(),
     })
   } catch (e) {
     const detail = e.response?.data?.detail
@@ -313,6 +333,9 @@ onMounted(async () => {
         font-size: 11px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow: auto; }
 
 .arts { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+.ctxline { margin-top: 8px; font-size: 11px; color: #b1b3b8; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.ctxline .deg { color: #e6a23c; }
+.ctxtip { font-size: 12px; line-height: 1.6; }
 
 .thinking { display: flex; flex-direction: column; color: #606266; font-size: 13px; }
 .pulse { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #409eff;

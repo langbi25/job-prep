@@ -10,6 +10,10 @@
    结果预览都能回放，出问题不用翻日志猜。
 4. **不用流式**：一轮里可能有 3~4 次 LLM 往返 + 2 次抽取，流式的收益不如
    "把每一步做了什么摊开给你看"。前端按 trace 逐条渲染即可。
+5. **上下文由 assembler 统一出**（2026-11-05 改造）：历史走"窗口 + 关键轮锚定"，
+   窗口外的压成摘要，再按需检索注入，超预算按 检索→摘要→最旧轮次 降级；
+   轮内工具结果单独裁（8 步 × 2600 字比历史更容易爆）。每轮的 token 账本落在
+   `ctx_traces`，本轮返回值里的 `ctx` 就是这份账本。
 """
 import datetime
 import json
@@ -18,9 +22,11 @@ import random
 from ..core import llm, prompts
 from ..core.db import get_conn
 from . import agent_tools, harness
+from ..context import assembler
 
 MAX_ITERS = 8
 HISTORY_TURNS = 6          # 带给模型的历史轮数（一问一答算一轮）
+HISTORY_FETCH_MSGS = 40    # 从库里捞多少条历史交给 assembler 去挑
 MAX_MESSAGE_CHARS = 20000  # 单条用户输入上限，防把整本书粘进来
 
 MODE_DESC = {
@@ -69,23 +75,30 @@ def _env_snapshot() -> str:
 
 
 def _history(session_id: str) -> list[dict]:
+    """捞最近一段历史**给 assembler 挑**，在这里截断等于替它做决定。
+
+    原先只取 HISTORY_TURNS*2 条（= 窗口大小），结果窗口外的消息 assembler 根本看不见，
+    摘要永远没有注入的机会——"摘要写了但没用上"就是这么来的。
+    """
     conn = get_conn()
     try:
         rows = conn.execute(
-            "SELECT role, content FROM console_messages WHERE session_id=? "
-            "ORDER BY id DESC LIMIT ?", (session_id, HISTORY_TURNS * 2)).fetchall()
-        return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+            "SELECT id, role, content FROM console_messages WHERE session_id=? "
+            "ORDER BY id DESC LIMIT ?", (session_id, HISTORY_FETCH_MSGS)).fetchall()
+        return [{"id": r["id"], "role": r["role"], "content": r["content"]} for r in reversed(rows)]
     finally:
         conn.close()
 
 
-def _save(session_id: str, role: str, content: str, trace: list | None = None, mode: str | None = None) -> None:
+def _save(session_id: str, role: str, content: str, trace: list | None = None,
+          mode: str | None = None, ctx: dict | None = None) -> None:
     conn = get_conn()
     try:
         conn.execute(
-            "INSERT INTO console_messages (session_id,role,content,trace_json,mode,created_at) "
-            "VALUES (?,?,?,?,?,?)",
-            (session_id, role, content, json.dumps(trace or [], ensure_ascii=False), mode, _now()))
+            "INSERT INTO console_messages (session_id,role,content,trace_json,ctx_json,mode,created_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (session_id, role, content, json.dumps(trace or [], ensure_ascii=False),
+             json.dumps(ctx or {}, ensure_ascii=False), mode, _now()))
         conn.commit()
     finally:
         conn.close()
@@ -95,10 +108,11 @@ def history(session_id: str) -> list[dict]:
     conn = get_conn()
     try:
         rows = conn.execute(
-            "SELECT role, content, trace_json, mode, created_at FROM console_messages "
+            "SELECT role, content, trace_json, ctx_json, mode, created_at FROM console_messages "
             "WHERE session_id=? ORDER BY id", (session_id,)).fetchall()
         return [{"role": r["role"], "content": r["content"],
                  "trace": json.loads(r["trace_json"] or "[]"),
+                 "ctx": json.loads(r["ctx_json"] or "{}"),
                  "mode": r["mode"], "created_at": r["created_at"]} for r in rows]
     finally:
         conn.close()
@@ -138,7 +152,7 @@ def _artifacts(trace: list[dict]) -> list[dict]:
 
 
 def chat(message: str, session_id: str | None = None, mode: str = "auto") -> dict:
-    """跑一轮对话。返回 {session_id, reply, trace, artifacts, iterations}。"""
+    """跑一轮对话。返回 {session_id, reply, trace, artifacts, iterations, ctx}。"""
     message = (message or "").strip()
     if not message:
         raise ValueError("消息不能为空")
@@ -156,8 +170,9 @@ def chat(message: str, session_id: str | None = None, mode: str = "auto") -> dic
         env=_env_snapshot(),
         message=message,
     )
-    messages = [{"role": "system", "content": system}] + history_msgs + [
-        {"role": "user", "content": user_msg}]
+    # 上下文统一走 assembler：窗口 + 锚定 + 摘要 + 检索，超预算按固定顺序降级
+    ctx = assembler.assemble(sid, system, user_msg, history_msgs)
+    messages = ctx.messages
 
     tools = harness.TOOLS + agent_tools.SCHEMAS
     impl = {**harness._IMPL, **agent_tools.IMPL}
@@ -165,6 +180,7 @@ def chat(message: str, session_id: str | None = None, mode: str = "auto") -> dic
 
     trace: list[dict] = []
     reply = ""
+    inflight: list[dict] = []
     try:
         for i in range(MAX_ITERS):
             msg = llm._chat_json(None, None, tools=tools, messages=messages)
@@ -192,6 +208,8 @@ def chat(message: str, session_id: str | None = None, mode: str = "auto") -> dic
                         "preview": payload[:300],
                     })
                     messages.append({"role": "tool", "tool_call_id": tc["id"], "content": payload})
+                # 工具结果一轮轮堆进去最容易爆：进入下一轮前先按预算裁最旧的
+                inflight.append(assembler.enforce_inflight(messages))
                 continue
 
             reply = (msg.get("content") or "").strip()
@@ -206,10 +224,11 @@ def chat(message: str, session_id: str | None = None, mode: str = "auto") -> dic
         reply = "（模型没有返回内容）"
 
     _save(sid, "user", message, None, mode)
-    _save(sid, "assistant", reply, trace, mode)
+    _save(sid, "assistant", reply, trace, mode, ctx.as_dict())
     return {"session_id": sid, "reply": reply, "trace": trace,
             "artifacts": _artifacts(trace), "iterations": len(trace),
-            "prompt_version": prompt_ver, "mode": mode}
+            "prompt_version": prompt_ver, "mode": mode,
+            "ctx": ctx.as_dict(), "inflight": inflight}
 
 
 def _short_args(args: dict) -> dict:

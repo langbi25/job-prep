@@ -23,6 +23,15 @@ LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
 
 APP_PORT = int(os.getenv("APP_PORT", "8765"))
 
+# ---- 上下文预算（app/context）----
+# 窗口取模型侧真实值；软上限是"成本/延迟"的自我约束——能塞 64K 不代表该塞 64K。
+CTX_WINDOW = int(os.getenv("CTX_WINDOW", "64000"))       # deepseek-chat：64K 上下文 / 8K 输出
+CTX_SOFT_CAP = int(os.getenv("CTX_SOFT_CAP", "12000"))   # 单次输入不超这个数（超出降级）
+CTX_OUTPUT_RESERVE = int(os.getenv("CTX_OUTPUT_RESERVE", "1024"))
+CTX_SAFETY = int(os.getenv("CTX_SAFETY", "512"))
+CTX_RECENT_TURNS = int(os.getenv("CTX_RECENT_TURNS", "6"))   # 最近 N 轮永久保留
+CTX_RETRIEVE_TOPK = int(os.getenv("CTX_RETRIEVE_TOPK", "3"))
+
 
 def ensure_dirs():
     for d in (DATA_DIR, KB_DIR, IV_DIR, INBOX_DIR, INBOX_DIR / "pending", INBOX_DIR / "archived", REPORTS_DIR):

@@ -12,10 +12,16 @@ import httpx
 from . import config, prompts
 
 _call_count = 0  # 进程级统计（评测脚本用）
+_last_usage: dict | None = None   # 最近一次调用的真实 token 用量，用来校准本地估算
 
 
 def stats() -> dict:
-    return {"calls": _call_count}
+    return {"calls": _call_count, "last_usage": _last_usage}
+
+
+def last_usage() -> dict | None:
+    """最近一次 API 返回的 usage（prompt_tokens 等），用于校准 `context.count_tokens` 的估算。"""
+    return _last_usage
 
 
 def extract_json(text: str) -> dict:
@@ -45,9 +51,15 @@ def extract_json(text: str) -> dict:
 
 
 def _chat_json(system: str | None, user: str | None, tools: list | None = None,
-               messages: list | None = None, temperature: float = 0.1) -> dict:
-    """发起对话补全。tools 模式返回原始 message（可能含 tool_calls），否则返回解析后的 JSON message。"""
-    global _call_count
+               messages: list | None = None, temperature: float = 0.1,
+               json_mode: bool = True) -> dict:
+    """发起对话补全。tools 模式返回原始 message（可能含 tool_calls），否则返回解析后的 JSON message。
+
+    json_mode=False 用于"我要的是一段话，不是 JSON"的场景（如摘要压缩）：
+    强制 json_object 时模型会把整段文字塞进 {"content": "..."} 里，
+    下游拿到的是 JSON 字符串而不是摘要——这个坑真的踩过。
+    """
+    global _call_count, _last_usage
     if not config.LLM_API_KEY:
         raise RuntimeError("LLM_API_KEY 未配置（见 .env），无法调用 LLM")
     if messages is None:
@@ -56,7 +68,7 @@ def _chat_json(system: str | None, user: str | None, tools: list | None = None,
     if tools:
         body["tools"] = tools
         body["tool_choice"] = "auto"
-    else:
+    elif json_mode:
         body["response_format"] = {"type": "json_object"}
     resp = httpx.post(
         f"{config.LLM_BASE_URL}/chat/completions",
@@ -66,7 +78,9 @@ def _chat_json(system: str | None, user: str | None, tools: list | None = None,
     )
     _call_count += 1
     resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]
+    data = resp.json()
+    _last_usage = data.get("usage")
+    return data["choices"][0]["message"]
 
 
 def chat_parsed(system: str, user: str, **kw) -> dict:
@@ -208,6 +222,20 @@ def evaluate_answer(question: dict, answer: str, persona: str, context: str = ""
     data.setdefault("scores", {"correctness": 0, "depth": 0, "structure": 0, "highlight": 0})
     data["_prompt"] = {"name": "evaluate_answer", "version": version}
     return data
+
+
+# ============ 上下文压缩（阶段 8） ============
+
+def summarize_context(prev_summary: str, transcript: str) -> str:
+    """把被窗口挤出去的旧对话压成三段式要点。
+
+    注意这里**不能**用 chat_parsed：那条路会强制 response_format=json_object，
+    而摘要要的是给人/模型看的三段短文，压成 JSON 反而更难注入。
+    """
+    system, user, _ = prompts.render(
+        "ctx_summarize", prev=(prev_summary or "（无）")[:1500], transcript=transcript[:12000])
+    msg = _chat_json(system, user, temperature=0.2, json_mode=False)
+    return (msg.get("content") or "").strip()
 
 
 def overall_report(direction: str, persona: str, qa_records: list[dict]) -> dict:

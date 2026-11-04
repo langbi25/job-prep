@@ -221,6 +221,7 @@ CREATE TABLE IF NOT EXISTS console_messages (
   role       TEXT NOT NULL,                 -- user / assistant
   content    TEXT NOT NULL,
   trace_json TEXT NOT NULL DEFAULT '[]',    -- 这一轮调了哪些工具（可回放）
+  ctx_json   TEXT DEFAULT '{}',             -- 这一轮的上下文账本（刷新页面也能看见）
   mode       TEXT,                          -- auto / assist，记下当时给的写权限
   created_at TEXT NOT NULL
 );
@@ -258,3 +259,38 @@ CREATE TABLE IF NOT EXISTS improvement_plans (
   adopted_at   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_plans_status ON improvement_plans(status);
+
+-- ============ 上下文管理（阶段 9）：窗口外的旧对话压成有界摘要 ============
+-- 为什么要落库而不是只放内存：摘要是"下一轮要注入的内容"，进程重启不能丢；
+-- 而且 covered_to_id 记录"压到哪一条了"，避免重复压缩同一段对话。
+CREATE TABLE IF NOT EXISTS conversation_summary (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id      TEXT NOT NULL,
+  covered_from_id INTEGER NOT NULL,   -- 覆盖 console_messages.id 区间 [from, to]
+  covered_to_id   INTEGER NOT NULL,
+  n_messages      INTEGER NOT NULL,
+  src_chars       INTEGER NOT NULL DEFAULT 0,
+  summary         TEXT NOT NULL,      -- 三段式：事实 / 进度 / 约束
+  created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_conv_summary ON conversation_summary(session_id, covered_to_id);
+
+-- 每轮的上下文账本：各分区 token、降级动作、锚定与丢弃数
+-- 单独建表而不是塞进 console_messages.trace_json：账本是"每次模型请求"一条
+-- （一轮里可能有 3~4 次请求），消息是"每轮"一条，粒度不同。
+CREATE TABLE IF NOT EXISTS ctx_traces (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id    TEXT,
+  seq           INTEGER,               -- 本会话第几次组装（从 1 开始）
+  budget        INTEGER,
+  total_tokens  INTEGER,
+  sections_json TEXT NOT NULL DEFAULT '{}',   -- {system, summary, retrieval, history, user, tools}
+  dropped_msgs  INTEGER DEFAULT 0,
+  anchored      INTEGER DEFAULT 0,
+  summary_id    INTEGER,
+  retrieved_n   INTEGER DEFAULT 0,
+  degraded_json TEXT DEFAULT '[]',     -- ["drop_retrieval","shorten_summary","drop_oldest_turn"]
+  fallback      TEXT,                  -- 非空表示降级/异常（CTX_OVER_BUDGET 等）
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ctx_traces ON ctx_traces(session_id, id);

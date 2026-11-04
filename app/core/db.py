@@ -65,6 +65,11 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     if "answer_gaps_json" not in qcols:
         conn.execute("ALTER TABLE question_pool ADD COLUMN answer_gaps_json TEXT DEFAULT '[]'")
 
+    # 对话消息带上"这一轮的上下文账本"，刷新页面后仍能看见当时花了多少 token
+    ccols = {r["name"] for r in conn.execute("PRAGMA table_info(console_messages)")}
+    if "ctx_json" not in ccols:
+        conn.execute("ALTER TABLE console_messages ADD COLUMN ctx_json TEXT DEFAULT '{}'")
+
 
 def init_db():
     """执行 schema.sql 建库建表（幂等），并保证两套全文索引与内容表一致。"""
