@@ -212,6 +212,20 @@ CREATE TABLE IF NOT EXISTS agent_actions (
   decided_at  TEXT
 );
 
+-- ============ 对话控制台（Agent 的唯一入口） ============
+-- 为什么要单独一张表而不是塞进 runs：runs 记的是"一次 Agent 运行"，
+-- 一个会话里有很多轮，且用户消息不属于任何一次 run。两者粒度和生命周期都不同。
+CREATE TABLE IF NOT EXISTS console_messages (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  role       TEXT NOT NULL,                 -- user / assistant
+  content    TEXT NOT NULL,
+  trace_json TEXT NOT NULL DEFAULT '[]',    -- 这一轮调了哪些工具（可回放）
+  mode       TEXT,                          -- auto / assist，记下当时给的写权限
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_console_session ON console_messages(session_id, id);
+
 -- ============ 飞轮：作战地图 / 真实结果回录（阶段 8） ============
 CREATE TABLE IF NOT EXISTS coverage_reports (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,

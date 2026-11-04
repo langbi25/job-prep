@@ -1,6 +1,7 @@
 .env
 data/kb.sqlite
 data/_backup/
+data/_tmp_live/
 __pycache__/
 .venv/
 reports/

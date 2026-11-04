@@ -8,6 +8,7 @@ const routes = [
     component: MainLayout,
     redirect: '/dashboard',
     children: [
+      { path: 'console', name: 'Console', component: () => import('../views/Console.vue'), meta: { title: 'Agent' } },
       { path: 'dashboard', name: 'Dashboard', component: () => import('../views/Dashboard.vue'), meta: { title: '总览' } },
       { path: 'ingests', name: 'Ingests', component: () => import('../views/Ingests.vue'), meta: { title: '采集中心' } },
       { path: 'coverage', name: 'Coverage', component: () => import('../views/Coverage.vue'), meta: { title: '作战地图' } },

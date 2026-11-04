@@ -4,6 +4,7 @@
       <div class="logo">🎯 Job Prep</div>
       <el-menu :default-active="$route.path" router background-color="#1d2530" text-color="#aeb7c2"
                active-text-color="#409eff" style="border-right: none">
+        <el-menu-item index="/console"><el-icon><ChatLineRound /></el-icon>Agent</el-menu-item>
         <el-menu-item index="/dashboard"><el-icon><Odometer /></el-icon>总览</el-menu-item>
         <el-menu-item index="/ingests"><el-icon><Upload /></el-icon>采集中心</el-menu-item>
         <el-menu-item index="/coverage"><el-icon><MapLocation /></el-icon>作战地图</el-menu-item>

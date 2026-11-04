@@ -135,7 +135,9 @@ def analyze_interview(interview_id: str) -> dict:
 
         items, gaps = [], []
         for q in questions:
-            card = _match_card(conn, q["text"], q["topic"], q["id"])
+            # 别名是 qid（跟上一条 SELECT 的 q.id AS qid 对齐）；曾误写 q["id"]，
+            # 只要面经关联了题就 IndexError，作战地图对所有真实面经都是崩的。
+            card = _match_card(conn, q["text"], q["topic"], q["qid"])
             pred, gap = _predict(card)
             mistake_n = conn.execute(
                 "SELECT COUNT(*) AS n FROM mistakes WHERE question_id=? AND resolved=0",
