@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
+from ..core.db import get_conn
 from ..models.schemas import CardCreate
 from ..services import kb_service
 
@@ -30,4 +31,15 @@ def get_card(card_id: str):
     card = kb_service.get_card(card_id)
     if not card:
         raise HTTPException(404, "卡片不存在")
+    # 分层视图的卡详情：带上「这张卡覆盖了哪些题」——L2 → L3 的向下指针
+    conn = get_conn()
+    try:
+        card["linked_questions"] = [
+            dict(r) for r in conn.execute(
+                "SELECT l.question_id, l.match_method, q.text, q.freq_count "
+                "FROM card_question_links l JOIN question_pool q ON q.id = l.question_id "
+                "WHERE l.card_id = ? ORDER BY q.freq_count DESC", (card_id,))
+        ]
+    finally:
+        conn.close()
     return card

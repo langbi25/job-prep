@@ -114,6 +114,50 @@ def list_questions(q: str | None = None, qtype: str | None = None, topic: str | 
         conn.close()
 
 
+@router.get("/questions/{qid}")
+def question_detail(qid: str):
+    """题目详情（分层视图用）：题面 + 别名 + 关联卡（含匹配方式）+ 面经出处。
+
+    L3 → L2 的向上指针来自 card_question_links；json 列只做兜底（legacy）。
+    面经出处走 question_occurrences —— 「这道题在哪几家面经里出现过」是频次的证据链。
+    """
+    import json
+
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT * FROM question_pool WHERE id=?", (qid,)).fetchone()
+        if not row:
+            raise HTTPException(404, "题目不存在")
+        d = dict(row)
+        d["aliases"] = json.loads(d["aliases_json"] or "[]")
+        links, seen = [], set()
+        for r in conn.execute(
+                "SELECT l.card_id, l.match_method, k.title, k.status, k.mastery "
+                "FROM card_question_links l JOIN kb_cards k ON k.id = l.card_id "
+                "WHERE l.question_id = ?", (qid,)):
+            links.append(dict(r))
+            seen.add(r["card_id"])
+        for cid in json.loads(d.get("related_card_ids_json") or "[]"):
+            if cid in seen:
+                continue
+            k = conn.execute(
+                "SELECT id, title, status, mastery FROM kb_cards WHERE id=?", (cid,)).fetchone()
+            if k:
+                links.append({"card_id": k["id"], "match_method": "legacy",
+                              "title": k["title"], "status": k["status"], "mastery": k["mastery"]})
+        d["linked_cards"] = links
+        d["occurrences"] = [
+            dict(r) for r in conn.execute(
+                "SELECT o.raw_text, o.ask_order, i.company, i.position, i.round, "
+                "i.interview_date, i.direction, i.result, i.id AS interview_id "
+                "FROM question_occurrences o JOIN feed_interviews i ON i.id = o.interview_id "
+                "WHERE o.question_id = ? ORDER BY i.interview_date DESC", (qid,))
+        ]
+        return d
+    finally:
+        conn.close()
+
+
 @router.post("/questions/{qid}/merge")
 def merge_question(qid: str, into: str):
     """把 qid 归并进 into：出现记录转移、频次累加、qid 标记 merged_into。"""
