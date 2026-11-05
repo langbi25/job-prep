@@ -7,7 +7,7 @@ status: active
 mastery: 0
 srs_due: ""
 tags: ["Agent建议"]
-related: []
+related: ["kb-project-context-001"]
 source: extract
 created: 2026-11-04
 updated: 2026-11-04

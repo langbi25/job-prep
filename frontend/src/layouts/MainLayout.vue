@@ -10,6 +10,7 @@
         <el-menu-item index="/coverage"><el-icon><MapLocation /></el-icon>作战地图</el-menu-item>
         <el-menu-item index="/questions"><el-icon><Collection /></el-icon>题目池</el-menu-item>
         <el-menu-item index="/cards"><el-icon><Notebook /></el-icon>知识库</el-menu-item>
+        <el-menu-item index="/ragboard"><el-icon><DataAnalysis /></el-icon>RAG 看板</el-menu-item>
         <el-menu-item index="/mock"><el-icon><ChatDotRound /></el-icon>模拟面试</el-menu-item>
         <el-menu-item index="/review"><el-icon><AlarmClock /></el-icon>复习中心</el-menu-item>
         <el-menu-item index="/approvals"><el-icon><Checked /></el-icon>审批中心</el-menu-item>
