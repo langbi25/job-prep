@@ -104,7 +104,8 @@ const statCards = computed(() => {
     { label: '活跃知识卡', value: kb.active_cards ?? '–', hint: '域：' + Object.keys(kb.domains || {}).length },
     { label: '归档卡', value: kb.archived_cards ?? '–', hint: '去重/合并产物' },
     { label: '题目', value: kb.questions ?? '–', hint: '库里主体是"题"，卡是"学到的结论"' },
-    { label: '题目→卡关联', value: kb.questions_linked ?? '–', hint: `关联率 ${pct(kb.coverage)}（口径：related_card_ids）` },
+    { label: '题目→卡关联', value: kb.questions_linked ?? '–',
+      hint: `关联率 ${pct(kb.coverage)} · ${Object.entries(kb.link_methods || {}).map(([k, v]) => `${k} ${v}`).join(' / ') || 'legacy'}` },
     { label: '卡↔卡边', value: kb.card_card_edges ?? '–', hint: 'related_json，尚稀疏' },
     { label: '图谱节点', value: data.value?.graph ? data.value.graph.nodes.length : '–', hint: '域/主题/卡/题四层' },
   ]

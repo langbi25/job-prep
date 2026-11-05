@@ -349,6 +349,7 @@ def _transfer_question_links(conn, dup: str, keeper: str) -> int:
 
     为什么必须搬：覆盖统计的硬关联这条路（_linked_card）只认 status='active' 的卡。
     重复卡归档后，只连着它的题目会瞬间变回「无卡」——去重反而制造了假缺口。
+    2026-11-06 起关系同时在 card_question_links 表和 json 镜像里，两处都要搬。
     """
     moved = 0
     rows = conn.execute(
@@ -369,6 +370,12 @@ def _transfer_question_links(conn, dup: str, keeper: str) -> int:
         conn.execute("UPDATE question_pool SET related_card_ids_json=? WHERE id=?",
                      (json.dumps(new_ids, ensure_ascii=False), r["id"]))
         moved += 1
+    # 关系表：搬移时保留原 match_method（它记录的是这段关系当初怎么来的）
+    conn.execute(
+        "INSERT OR IGNORE INTO card_question_links (question_id, card_id, match_method, confidence, created_at) "
+        "SELECT question_id, ?, match_method, confidence, created_at FROM card_question_links WHERE card_id=?",
+        (keeper, dup))
+    conn.execute("DELETE FROM card_question_links WHERE card_id=?", (dup,))
     return moved
 
 
@@ -443,7 +450,7 @@ def decide(action_id: str, approve: bool) -> dict:
                 qid = payload.get("question_id")
                 if qid:
                     try:
-                        if kb_service.link_question_card(qid, card["id"]):
+                        if kb_service.link_question_card(qid, card["id"], match_method="drafted"):
                             result["linked_question"] = qid
                     except Exception as e:  # noqa: BLE001
                         result["link_question_error"] = str(e)[:120]

@@ -200,8 +200,9 @@ def update_card_content(card_id: str, points: list[str], pitfalls: list[str] | N
         conn.close()
 
 
-def link_question_card(question_id: str, card_id: str) -> bool:
-    """把"这张卡是为这道题建的"写进题目池。返回是否新增。
+def link_question_card(question_id: str, card_id: str,
+                       match_method: str = "manual", confidence: float | None = None) -> bool:
+    """把"这张卡是为这道题建的"写成一等关系：card_question_links 表 + json 镜像。返回是否新增。
 
     为什么必须存这条关系：`question_pool.related_card_ids_json` 一直空着，
     而覆盖统计靠余弦相似度去**猜**某道题有没有卡。可是建卡时明明知道是为哪道题建的——
@@ -210,6 +211,11 @@ def link_question_card(question_id: str, card_id: str) -> bool:
       但题目 topic 是 "Memory"、卡片 topic 是 "Agent 记忆"，字符串不相等被判成跨主题
       （门槛 0.85）→ 0.804 < 0.85 → 判无卡。
     有了这条硬关联，只要卡还在（status='active'），这道题就算被覆盖，与措辞无关。
+
+    为什么 2026-11-06 起关系进表而不是只进 json：json 列装不下 match_method /
+    confidence / created_at，「建卡记下的」和「向量猜的」混在一个列表里，
+    作战地图与看板的覆盖率口径打架（31% vs 25%）就是这么来的。
+    json 列保留为镜像，兼容迁移期遗漏的读方。
     """
     conn = get_conn()
     try:
@@ -217,21 +223,46 @@ def link_question_card(question_id: str, card_id: str) -> bool:
             "SELECT related_card_ids_json FROM question_pool WHERE id=?", (question_id,)).fetchone()
         if not row:
             return False
-        try:
-            ids = json.loads(row["related_card_ids_json"] or "[]")
-        except (ValueError, TypeError):
-            ids = []
-        if not isinstance(ids, list):
-            ids = []
-        if card_id in ids:
-            return False
-        ids.append(card_id)
-        conn.execute("UPDATE question_pool SET related_card_ids_json=? WHERE id=?",
-                     (json.dumps(ids, ensure_ascii=False), question_id))
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO card_question_links "
+            "(question_id, card_id, match_method, confidence, created_at) VALUES (?,?,?,?,?)",
+            (question_id, card_id, match_method, confidence,
+             datetime.datetime.now().isoformat(timespec="seconds")))
+        newly = cur.rowcount > 0
+        # json 镜像：只在真新增时写，避免无谓的写放大
+        if newly:
+            try:
+                ids = json.loads(row["related_card_ids_json"] or "[]")
+            except (ValueError, TypeError):
+                ids = []
+            if not isinstance(ids, list):
+                ids = []
+            if card_id not in ids:
+                ids.append(card_id)
+                conn.execute("UPDATE question_pool SET related_card_ids_json=? WHERE id=?",
+                             (json.dumps(ids, ensure_ascii=False), question_id))
         conn.commit()
-        return True
+        return newly
     finally:
         conn.close()
+
+
+def linked_card_ids(conn: sqlite3.Connection, question_id: str) -> list[str]:
+    """读某题的关联卡 id：关系表优先，表里没有再回退 json 列（迁移期双保险）。"""
+    rows = conn.execute(
+        "SELECT card_id FROM card_question_links WHERE question_id=? ORDER BY id",
+        (question_id,)).fetchall()
+    if rows:
+        return [r["card_id"] for r in rows]
+    row = conn.execute(
+        "SELECT related_card_ids_json FROM question_pool WHERE id=?", (question_id,)).fetchone()
+    if not row:
+        return []
+    try:
+        ids = json.loads(row["related_card_ids_json"] or "[]")
+    except (ValueError, TypeError):
+        return []
+    return ids if isinstance(ids, list) else []
 
 
 def link_related(card_id: str, other_id: str) -> bool:

@@ -19,6 +19,8 @@ from .db import get_conn
 
 _model = None
 EMBED_DIM = 512  # bge-small-zh-v1.5
+# 写进 embeddings.model：换模型时只重嵌 model 不匹配的行，新旧向量不混算余弦
+MODEL_ID = "BAAI/bge-small-zh-v1.5"
 
 
 def available() -> bool:
@@ -66,8 +68,9 @@ def ensure_indexed(entity_type: str, items: list[tuple[str, str]]) -> int:
     try:
         for (eid, text), v in zip(todo, vectors):
             conn.execute(
-                "INSERT OR REPLACE INTO embeddings (entity_type, entity_id, text_hash, vector) VALUES (?,?,?,?)",
-                (entity_type, eid, _hash(text), json.dumps(v.tolist())),
+                "INSERT OR REPLACE INTO embeddings (entity_type, entity_id, text_hash, vector, model) "
+                "VALUES (?,?,?,?,?)",
+                (entity_type, eid, _hash(text), json.dumps(v.tolist()), MODEL_ID),
             )
         conn.commit()
     finally:

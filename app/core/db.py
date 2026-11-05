@@ -1,3 +1,5 @@
+import datetime
+import json
 import sqlite3
 from pathlib import Path
 
@@ -69,6 +71,37 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     ccols = {r["name"] for r in conn.execute("PRAGMA table_info(console_messages)")}
     if "ctx_json" not in ccols:
         conn.execute("ALTER TABLE console_messages ADD COLUMN ctx_json TEXT DEFAULT '{}'")
+
+    # 关系层迁移①：embeddings 记模型版本。不记的话换 embedding 模型后新旧向量混存，
+    # 余弦在两个空间之间算，检索结果无声劣化且无法甄别——比报错难查得多。
+    ecols = {r["name"] for r in conn.execute("PRAGMA table_info(embeddings)")}
+    if "model" not in ecols:
+        conn.execute("ALTER TABLE embeddings ADD COLUMN model TEXT DEFAULT ''")
+        from . import embedder
+        conn.execute("UPDATE embeddings SET model=? WHERE model='' OR model IS NULL",
+                     (embedder.MODEL_ID,))
+
+    # 关系层迁移②：json 列里的题↔卡关联回灌进 card_question_links（match_method='legacy'）。
+    # 用 Python 循环而不是 json_each：老数据可能有脏 json，一条坏行不该让整个迁移失败。
+    # 存量关联是历次建卡写的硬关联，标 legacy 而不是编造一个匹配方式。
+    n = conn.execute("SELECT COUNT(*) FROM card_question_links").fetchone()[0]
+    if n == 0:
+        ts = datetime.datetime.now().isoformat(timespec="seconds")
+        for r in conn.execute(
+                "SELECT id, related_card_ids_json FROM question_pool WHERE related_card_ids_json != '[]'"):
+            try:
+                ids = json.loads(r["related_card_ids_json"] or "[]")
+            except (ValueError, TypeError):
+                continue
+            for cid in ids if isinstance(ids, list) else []:
+                conn.execute(
+                    "INSERT OR IGNORE INTO card_question_links "
+                    "(question_id, card_id, match_method, created_at) VALUES (?,?,'legacy',?)",
+                    (r["id"], cid, ts))
+        # 迁移函数自己提交：调用方（init_db）会 commit，但任何绕过 init_db 的路径
+        # （脚本、手工迁移、异常后重试）不 commit 就 close，整个迁移静默回滚——
+        # 表结构在（DDL 隐式提交）而数据没灌进去，比报错难查得多。
+        conn.commit()
 
 
 def init_db():

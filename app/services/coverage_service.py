@@ -15,6 +15,7 @@ import re
 
 from ..core import embedder
 from ..core.db import get_conn
+from . import kb_service
 
 SIM_MIN = 0.75          # 同主题匹配下限：实测同主题真实覆盖落在 0.83~0.99
 CROSS_TOPIC_MIN = 0.85  # 跨主题匹配下限：更高，防止"都聊技术"的伪相似
@@ -59,18 +60,13 @@ def _card_row(conn, card_id: str):
 
 
 def _linked_card(conn, question_id: str | None):
-    """硬关联：建卡时记下的"这张卡属于这道题"，命中即算覆盖，不必看相似度。"""
+    """硬关联：card_question_links 里"这张卡属于这道题"，命中即算覆盖，不必看相似度。
+
+    读关系表（2026-11-06 起），linked_card_ids 内部带 json 列回退，迁移期双保险。
+    """
     if not question_id:
         return None
-    row = conn.execute(
-        "SELECT related_card_ids_json FROM question_pool WHERE id=?", (question_id,)).fetchone()
-    if not row:
-        return None
-    try:
-        ids = json.loads(row["related_card_ids_json"] or "[]")
-    except (ValueError, TypeError):
-        return None
-    for cid in ids if isinstance(ids, list) else []:
+    for cid in kb_service.linked_card_ids(conn, question_id):
         card = _card_row(conn, cid)
         if card:
             return dict(card) | {"similarity": 1.0, "via": "linked"}

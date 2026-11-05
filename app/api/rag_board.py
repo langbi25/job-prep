@@ -47,7 +47,9 @@ def _kb_stats() -> dict:
         active = c.execute("SELECT COUNT(*) FROM kb_cards WHERE status='active'").fetchone()[0]
         archived = c.execute("SELECT COUNT(*) FROM kb_cards WHERE status='archived'").fetchone()[0]
         questions = c.execute("SELECT COUNT(*) FROM question_pool WHERE merged_into IS NULL").fetchone()[0]
-        # 卡↔题边：题目池的 related_card_ids_json（建卡/复盘时写入的真实关联）
+        # 卡↔题边：card_question_links 关系表（2026-11-06 起是一等关系，json 列只是镜像）。
+        # match_method 分桶顺手解决口径打架：legacy/manual/drafted 是「建卡记下的」，
+        # vector 是「相似度猜的」——两个口径都从同一张表出，再也不会 31% vs 25% 各说各话。
         linked = 0
         domains: dict[str, int] = {}
         topics: dict[str, int] = {}
@@ -58,16 +60,20 @@ def _kb_stats() -> dict:
             if (r["related_json"] or "[]") != "[]":
                 rel_edges += len(json.loads(r["related_json"]))
         q_linked_ids = set()
-        for r in c.execute("SELECT id, related_card_ids_json FROM question_pool WHERE merged_into IS NULL"):
-            ids = json.loads(r["related_card_ids_json"] or "[]")
-            if ids:
-                linked += 1
-                q_linked_ids.add(r["id"])
+        link_methods: dict[str, int] = {}
+        for r in c.execute(
+                "SELECT DISTINCT l.question_id, l.match_method FROM card_question_links l "
+                "JOIN kb_cards k ON k.id = l.card_id AND k.status='active' "
+                "JOIN question_pool q ON q.id = l.question_id AND q.merged_into IS NULL"):
+            q_linked_ids.add(r["question_id"])
+            link_methods[r["match_method"]] = link_methods.get(r["match_method"], 0) + 1
+        linked = len(q_linked_ids)
         return {
             "active_cards": active, "archived_cards": archived,
             "questions": questions,
             "questions_linked": linked,
             "coverage": round(linked / questions, 3) if questions else None,
+            "link_methods": link_methods,
             "card_card_edges": rel_edges,
             "domains": domains,
             "topics": topics,
@@ -117,10 +123,14 @@ def _build_graph() -> dict:
                               "rel": "related"})
 
         qcards = {f"card:{r[0]}" for r in c.execute("SELECT id FROM kb_cards")}
+        links: dict[str, list[str]] = {}
         for r in c.execute(
-                "SELECT id, text, topic, related_card_ids_json FROM question_pool "
-                "WHERE merged_into IS NULL"):
-            rel = [x for x in json.loads(r["related_card_ids_json"] or "[]") if f"card:{x}" in qcards]
+                "SELECT l.question_id, l.card_id FROM card_question_links l "
+                "JOIN kb_cards k ON k.id = l.card_id AND k.status='active'"):
+            links.setdefault(r["question_id"], []).append(r["card_id"])
+        for r in c.execute(
+                "SELECT id, text, topic FROM question_pool WHERE merged_into IS NULL"):
+            rel = [x for x in links.get(r["id"], []) if f"card:{x}" in qcards]
             orphan = not rel
             nodes.append({
                 "id": f"q:{r['id']}", "name": (r["text"] or "")[:20],

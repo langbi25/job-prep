@@ -186,6 +186,7 @@ CREATE TABLE IF NOT EXISTS embeddings (
   entity_id   TEXT NOT NULL,
   text_hash   TEXT NOT NULL,             -- 内容变更检测
   vector      TEXT NOT NULL,             -- JSON float list（数据量小，免向量库服务，2G 友好）
+  model       TEXT NOT NULL DEFAULT '',  -- 生成向量用的模型 id；换模型时只重嵌不匹配的行，新旧向量不混算余弦
   PRIMARY KEY (entity_type, entity_id)
 );
 
@@ -294,3 +295,19 @@ CREATE TABLE IF NOT EXISTS ctx_traces (
   created_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_ctx_traces ON ctx_traces(session_id, id);
+
+-- ============ 关系层（L2）：题↔卡一等关系，接替 json 列 ============
+-- 为什么建表而不是继续用 related_card_ids_json：json 列装不下三样东西——
+-- 这条关系是「建卡时记下的」还是「向量猜的」（match_method）、猜的有多确（confidence）、
+-- 什么时候挂上的（created_at）。口径打架（作战地图 31% vs 看板 25%）的根源就在这。
+-- json 列保留作镜像，写路径双写，读路径一律走本表。
+CREATE TABLE IF NOT EXISTS card_question_links (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  question_id  TEXT NOT NULL REFERENCES question_pool(id),
+  card_id      TEXT NOT NULL REFERENCES kb_cards(id),
+  match_method TEXT NOT NULL DEFAULT 'manual',   -- drafted/manual/vector/legacy/transfer
+  confidence   REAL,
+  created_at   TEXT NOT NULL,
+  UNIQUE(question_id, card_id)
+);
+CREATE INDEX IF NOT EXISTS idx_cql_card ON card_question_links(card_id);
