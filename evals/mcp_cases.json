@@ -1,0 +1,243 @@
+{
+  "version": 1,
+  "note": "MCP 工具评测用例。request 是用户会说的话；expect_tool 是期望的工具（null = 不应该调工具）；exec_args 用于契约测试（写工具不执行，避免评测污染审批队列）；expect_args 是参数关键值校验（子串匹配）。占位符 $CARD_ID / $QID 运行时替换为库里真实 id。",
+  "cases": [
+    {
+      "id": "sel-01",
+      "bucket": "read",
+      "request": "我 Flink 反压排查到底记过什么？",
+      "expect_tool": "search_kb",
+      "exec_args": {
+        "query": "Flink 反压排查",
+        "top_k": 3
+      },
+      "expect_args": {
+        "query": [
+          "反压"
+        ]
+      }
+    },
+    {
+      "id": "sel-02",
+      "bucket": "read",
+      "request": "MySQL 索引失效我有没有笔记",
+      "expect_tool": "search_kb",
+      "exec_args": {
+        "query": "MySQL 索引失效"
+      },
+      "expect_args": {
+        "query": [
+          "索引"
+        ]
+      }
+    },
+    {
+      "id": "sel-03",
+      "bucket": "read",
+      "request": "Agent 的记忆机制我总结过吗",
+      "expect_tool": "search_kb",
+      "exec_args": {
+        "query": "Agent 记忆"
+      },
+      "expect_args": {
+        "query": [
+          "记忆"
+        ]
+      }
+    },
+    {
+      "id": "sel-04",
+      "bucket": "read",
+      "request": "kb-backend-redis-001 这张卡具体讲了什么",
+      "expect_tool": "get_card",
+      "exec_args": {
+        "card_id": "$CARD_ID"
+      }
+    },
+    {
+      "id": "sel-05",
+      "bucket": "read",
+      "request": "今天有哪些卡到期要复习",
+      "expect_tool": "list_due_cards",
+      "exec_args": {
+        "limit": 10
+      }
+    },
+    {
+      "id": "sel-06",
+      "bucket": "read",
+      "request": "今天的学习安排是什么",
+      "expect_tool": "get_daily_brief",
+      "exec_args": {}
+    },
+    {
+      "id": "sel-07",
+      "bucket": "read",
+      "request": "我最近哪个方向最弱",
+      "expect_tool": "get_weak_topics",
+      "exec_args": {}
+    },
+    {
+      "id": "sel-08",
+      "bucket": "read",
+      "request": "后端方向我哪里薄弱",
+      "expect_tool": "get_weak_topics",
+      "exec_args": {
+        "direction": "backend"
+      },
+      "expect_args": {
+        "direction": [
+          "backend"
+        ]
+      }
+    },
+    {
+      "id": "sel-09",
+      "bucket": "read",
+      "request": "面试最常考哪些题",
+      "expect_tool": "get_top_questions",
+      "exec_args": {
+        "limit": 5
+      }
+    },
+    {
+      "id": "sel-10",
+      "bucket": "read",
+      "request": "出现次数最多的 10 道题列一下",
+      "expect_tool": "get_top_questions",
+      "exec_args": {
+        "limit": 10
+      },
+      "expect_args": {
+        "limit": [
+          "10"
+        ]
+      }
+    },
+    {
+      "id": "sel-11",
+      "bucket": "read",
+      "request": "Redis 缓存穿透那道题我有没有答案",
+      "expect_tool": "search_kb",
+      "exec_args": {
+        "query": "Redis 缓存穿透"
+      },
+      "expect_args": {
+        "query": [
+          "缓存穿透"
+        ]
+      }
+    },
+    {
+      "id": "sel-12",
+      "bucket": "read",
+      "request": "RAG 评测这块我记过什么",
+      "expect_tool": "search_kb",
+      "exec_args": {
+        "query": "RAG 评测"
+      },
+      "expect_args": {
+        "query": [
+          "RAG"
+        ]
+      }
+    },
+    {
+      "id": "sel-13",
+      "bucket": "read",
+      "request": "我最近模拟面试平均多少分",
+      "expect_tool": "get_daily_brief",
+      "exec_args": {}
+    },
+    {
+      "id": "sel-14",
+      "bucket": "read",
+      "request": "大数据方向的弱项有哪些",
+      "expect_tool": "get_weak_topics",
+      "exec_args": {
+        "direction": "bigdata"
+      },
+      "expect_args": {
+        "direction": [
+          "bigdata"
+        ]
+      }
+    },
+    {
+      "id": "sel-15",
+      "bucket": "read",
+      "request": "看看 kb-bigdata-flink-001 的全文",
+      "expect_tool": "get_card",
+      "exec_args": {
+        "card_id": "kb-bigdata-flink-001"
+      }
+    },
+    {
+      "id": "sel-16",
+      "bucket": "read",
+      "request": "明天该复习哪些卡",
+      "expect_tool": "list_due_cards",
+      "exec_args": {
+        "limit": 10
+      }
+    },
+    {
+      "id": "neg-01",
+      "bucket": "negative",
+      "request": "今天北京天气怎么样",
+      "expect_tool": null
+    },
+    {
+      "id": "neg-02",
+      "bucket": "negative",
+      "request": "帮我写一首关于春天的诗",
+      "expect_tool": null
+    },
+    {
+      "id": "neg-03",
+      "bucket": "negative",
+      "request": "1 加 1 等于几",
+      "expect_tool": null
+    },
+    {
+      "id": "neg-04",
+      "bucket": "negative",
+      "request": "把知识库里的卡片全部删掉",
+      "expect_tool": null
+    },
+    {
+      "id": "wr-01",
+      "bucket": "write",
+      "request": "把这段面经收进系统：一面问了 Flink 反压的排查思路，我从背压和 GC 两方面答的；又问了 Checkpoint 和状态后端怎么选，Chandy-Lamport 我讲得比较粗。",
+      "expect_tool": "ingest_text"
+    },
+    {
+      "id": "wr-02",
+      "bucket": "write",
+      "request": "帮我给题目 q-0007 建一张知识卡",
+      "expect_tool": "draft_cards",
+      "expect_args": {
+        "question_ids": [
+          "q-0007"
+        ]
+      }
+    },
+    {
+      "id": "wr-03",
+      "bucket": "write",
+      "request": "给 q-0008 起草一张卡，它现在还没有笔记",
+      "expect_tool": "draft_cards",
+      "expect_args": {
+        "question_ids": [
+          "q-0008"
+        ]
+      }
+    },
+    {
+      "id": "wr-04",
+      "bucket": "write",
+      "request": "这段面试记录帮我存到系统里：Kafka 为什么快，我答了顺序写、页缓存和零拷贝；追问 ISR 收缩的过程，我没答上来。",
+      "expect_tool": "ingest_text"
+    }
+  ]
+}

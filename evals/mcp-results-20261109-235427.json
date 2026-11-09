@@ -1,0 +1,547 @@
+{
+  "timestamp": "2026-11-09T23:53:59",
+  "mode": "mcp",
+  "thresholds": {
+    "contract_ok_rate": 0.95,
+    "tool_accuracy": 0.85,
+    "arg_accuracy": 0.8,
+    "overreach_max": 0.0
+  },
+  "contract": {
+    "total": 16,
+    "ok": 16,
+    "ok_rate": 1.0,
+    "p50_ms": 23,
+    "p95_ms": 1157,
+    "cases": [
+      {
+        "case": "sel-01",
+        "tool": "search_kb",
+        "ok": true,
+        "latency_ms": 1157,
+        "chars": 2143,
+        "error": null,
+        "bucket": "contract"
+      },
+      {
+        "case": "sel-02",
+        "tool": "search_kb",
+        "ok": true,
+        "latency_ms": 63,
+        "chars": 1976,
+        "error": null,
+        "bucket": "contract"
+      },
+      {
+        "case": "sel-03",
+        "tool": "search_kb",
+        "ok": true,
+        "latency_ms": 66,
+        "chars": 1819,
+        "error": null,
+        "bucket": "contract"
+      },
+      {
+        "case": "sel-04",
+        "tool": "get_card",
+        "ok": true,
+        "latency_ms": 23,
+        "chars": 1231,
+        "error": null,
+        "bucket": "contract"
+      },
+      {
+        "case": "sel-05",
+        "tool": "list_due_cards",
+        "ok": true,
+        "latency_ms": 11,
+        "chars": 1950,
+        "error": null,
+        "bucket": "contract"
+      },
+      {
+        "case": "sel-06",
+        "tool": "get_daily_brief",
+        "ok": true,
+        "latency_ms": 28,
+        "chars": 1905,
+        "error": null,
+        "bucket": "contract"
+      },
+      {
+        "case": "sel-07",
+        "tool": "get_weak_topics",
+        "ok": true,
+        "latency_ms": 10,
+        "chars": 717,
+        "error": null,
+        "bucket": "contract"
+      },
+      {
+        "case": "sel-08",
+        "tool": "get_weak_topics",
+        "ok": true,
+        "latency_ms": 10,
+        "chars": 629,
+        "error": null,
+        "bucket": "contract"
+      },
+      {
+        "case": "sel-09",
+        "tool": "get_top_questions",
+        "ok": true,
+        "latency_ms": 10,
+        "chars": 503,
+        "error": null,
+        "bucket": "contract"
+      },
+      {
+        "case": "sel-10",
+        "tool": "get_top_questions",
+        "ok": true,
+        "latency_ms": 9,
+        "chars": 1002,
+        "error": null,
+        "bucket": "contract"
+      },
+      {
+        "case": "sel-11",
+        "tool": "search_kb",
+        "ok": true,
+        "latency_ms": 72,
+        "chars": 1642,
+        "error": null,
+        "bucket": "contract"
+      },
+      {
+        "case": "sel-12",
+        "tool": "search_kb",
+        "ok": true,
+        "latency_ms": 64,
+        "chars": 1845,
+        "error": null,
+        "bucket": "contract"
+      },
+      {
+        "case": "sel-13",
+        "tool": "get_daily_brief",
+        "ok": true,
+        "latency_ms": 35,
+        "chars": 1905,
+        "error": null,
+        "bucket": "contract"
+      },
+      {
+        "case": "sel-14",
+        "tool": "get_weak_topics",
+        "ok": true,
+        "latency_ms": 13,
+        "chars": 717,
+        "error": null,
+        "bucket": "contract"
+      },
+      {
+        "case": "sel-15",
+        "tool": "get_card",
+        "ok": true,
+        "latency_ms": 19,
+        "chars": 282,
+        "error": null,
+        "bucket": "contract"
+      },
+      {
+        "case": "sel-16",
+        "tool": "list_due_cards",
+        "ok": true,
+        "latency_ms": 11,
+        "chars": 1950,
+        "error": null,
+        "bucket": "contract"
+      }
+    ]
+  },
+  "selection": {
+    "total": 24,
+    "tool_ok": 24,
+    "tool_accuracy": 1.0,
+    "arg_checked": 10,
+    "arg_ok": 10,
+    "arg_accuracy": 1.0,
+    "e2e_ok": 16,
+    "e2e_rate": 0.667,
+    "overreach": 0,
+    "overreach_rate": 0.0,
+    "cases": [
+      {
+        "case": "sel-01",
+        "bucket": "read",
+        "request": "我 Flink 反压排查到底记过什么？",
+        "expect": "search_kb",
+        "got": "search_kb",
+        "args": {
+          "query": "Flink 反压排查",
+          "topic": "Flink",
+          "top_k": 5
+        },
+        "tool_ok": true,
+        "args_ok": true,
+        "e2e_ok": true,
+        "error": null,
+        "args_bad": [],
+        "e2e_ms": 83
+      },
+      {
+        "case": "sel-02",
+        "bucket": "read",
+        "request": "MySQL 索引失效我有没有笔记",
+        "expect": "search_kb",
+        "got": "search_kb",
+        "args": {
+          "query": "MySQL 索引失效",
+          "top_k": 5
+        },
+        "tool_ok": true,
+        "args_ok": true,
+        "e2e_ok": true,
+        "error": null,
+        "args_bad": [],
+        "e2e_ms": 51
+      },
+      {
+        "case": "sel-03",
+        "bucket": "read",
+        "request": "Agent 的记忆机制我总结过吗",
+        "expect": "search_kb",
+        "got": "search_kb",
+        "args": {
+          "query": "Agent 记忆机制",
+          "topic": "Agent 记忆",
+          "top_k": 5
+        },
+        "tool_ok": true,
+        "args_ok": true,
+        "e2e_ok": true,
+        "error": null,
+        "args_bad": [],
+        "e2e_ms": 75
+      },
+      {
+        "case": "sel-04",
+        "bucket": "read",
+        "request": "kb-backend-redis-001 这张卡具体讲了什么",
+        "expect": "get_card",
+        "got": "get_card",
+        "args": {
+          "card_id": "kb-backend-redis-001"
+        },
+        "tool_ok": true,
+        "args_ok": null,
+        "e2e_ok": true,
+        "error": null,
+        "e2e_ms": 31
+      },
+      {
+        "case": "sel-05",
+        "bucket": "read",
+        "request": "今天有哪些卡到期要复习",
+        "expect": "list_due_cards",
+        "got": "list_due_cards",
+        "args": {
+          "limit": 20
+        },
+        "tool_ok": true,
+        "args_ok": null,
+        "e2e_ok": true,
+        "error": null,
+        "e2e_ms": 12
+      },
+      {
+        "case": "sel-06",
+        "bucket": "read",
+        "request": "今天的学习安排是什么",
+        "expect": "get_daily_brief",
+        "got": "get_daily_brief",
+        "args": {},
+        "tool_ok": true,
+        "args_ok": null,
+        "e2e_ok": true,
+        "error": null,
+        "e2e_ms": 33
+      },
+      {
+        "case": "sel-07",
+        "bucket": "read",
+        "request": "我最近哪个方向最弱",
+        "expect": "get_weak_topics",
+        "got": "get_weak_topics",
+        "args": {},
+        "tool_ok": true,
+        "args_ok": null,
+        "e2e_ok": true,
+        "error": null,
+        "e2e_ms": 11
+      },
+      {
+        "case": "sel-08",
+        "bucket": "read",
+        "request": "后端方向我哪里薄弱",
+        "expect": "get_weak_topics",
+        "got": "get_weak_topics",
+        "args": {
+          "direction": "backend"
+        },
+        "tool_ok": true,
+        "args_ok": true,
+        "e2e_ok": true,
+        "error": null,
+        "args_bad": [],
+        "e2e_ms": 11
+      },
+      {
+        "case": "sel-09",
+        "bucket": "read",
+        "request": "面试最常考哪些题",
+        "expect": "get_top_questions",
+        "got": "get_top_questions",
+        "args": {
+          "limit": 10
+        },
+        "tool_ok": true,
+        "args_ok": null,
+        "e2e_ok": true,
+        "error": null,
+        "e2e_ms": 9
+      },
+      {
+        "case": "sel-10",
+        "bucket": "read",
+        "request": "出现次数最多的 10 道题列一下",
+        "expect": "get_top_questions",
+        "got": "get_top_questions",
+        "args": {
+          "limit": 10
+        },
+        "tool_ok": true,
+        "args_ok": true,
+        "e2e_ok": true,
+        "error": null,
+        "args_bad": [],
+        "e2e_ms": 29
+      },
+      {
+        "case": "sel-11",
+        "bucket": "read",
+        "request": "Redis 缓存穿透那道题我有没有答案",
+        "expect": "search_kb",
+        "got": "search_kb",
+        "args": {
+          "query": "Redis 缓存穿透",
+          "top_k": 3
+        },
+        "tool_ok": true,
+        "args_ok": true,
+        "e2e_ok": true,
+        "error": null,
+        "args_bad": [],
+        "e2e_ms": 65
+      },
+      {
+        "case": "sel-12",
+        "bucket": "read",
+        "request": "RAG 评测这块我记过什么",
+        "expect": "search_kb",
+        "got": "search_kb",
+        "args": {
+          "query": "RAG 评测",
+          "top_k": 5
+        },
+        "tool_ok": true,
+        "args_ok": true,
+        "e2e_ok": true,
+        "error": null,
+        "args_bad": [],
+        "e2e_ms": 65
+      },
+      {
+        "case": "sel-13",
+        "bucket": "read",
+        "request": "我最近模拟面试平均多少分",
+        "expect": "get_daily_brief",
+        "got": "get_daily_brief",
+        "args": {},
+        "tool_ok": true,
+        "args_ok": null,
+        "e2e_ok": true,
+        "error": null,
+        "e2e_ms": 29
+      },
+      {
+        "case": "sel-14",
+        "bucket": "read",
+        "request": "大数据方向的弱项有哪些",
+        "expect": "get_weak_topics",
+        "got": "get_weak_topics",
+        "args": {
+          "direction": "bigdata"
+        },
+        "tool_ok": true,
+        "args_ok": true,
+        "e2e_ok": true,
+        "error": null,
+        "args_bad": [],
+        "e2e_ms": 11
+      },
+      {
+        "case": "sel-15",
+        "bucket": "read",
+        "request": "看看 kb-bigdata-flink-001 的全文",
+        "expect": "get_card",
+        "got": "get_card",
+        "args": {
+          "card_id": "kb-bigdata-flink-001"
+        },
+        "tool_ok": true,
+        "args_ok": null,
+        "e2e_ok": true,
+        "error": null,
+        "e2e_ms": 18
+      },
+      {
+        "case": "sel-16",
+        "bucket": "read",
+        "request": "明天该复习哪些卡",
+        "expect": "list_due_cards",
+        "got": "list_due_cards",
+        "args": {
+          "limit": 20
+        },
+        "tool_ok": true,
+        "args_ok": null,
+        "e2e_ok": true,
+        "error": null,
+        "e2e_ms": 11
+      },
+      {
+        "case": "neg-01",
+        "bucket": "negative",
+        "request": "今天北京天气怎么样",
+        "expect": null,
+        "got": null,
+        "args": null,
+        "tool_ok": true,
+        "args_ok": null,
+        "e2e_ok": null,
+        "error": null
+      },
+      {
+        "case": "neg-02",
+        "bucket": "negative",
+        "request": "帮我写一首关于春天的诗",
+        "expect": null,
+        "got": null,
+        "args": null,
+        "tool_ok": true,
+        "args_ok": null,
+        "e2e_ok": null,
+        "error": null
+      },
+      {
+        "case": "neg-03",
+        "bucket": "negative",
+        "request": "1 加 1 等于几",
+        "expect": null,
+        "got": null,
+        "args": null,
+        "tool_ok": true,
+        "args_ok": null,
+        "e2e_ok": null,
+        "error": null
+      },
+      {
+        "case": "neg-04",
+        "bucket": "negative",
+        "request": "把知识库里的卡片全部删掉",
+        "expect": null,
+        "got": null,
+        "args": null,
+        "tool_ok": true,
+        "args_ok": null,
+        "e2e_ok": null,
+        "error": null
+      },
+      {
+        "case": "wr-01",
+        "bucket": "write",
+        "request": "把这段面经收进系统：一面问了 Flink 反压的排查思路，我从背压和 GC 两方面答的；又问了 Checkpoint 和状态后端怎么选，Chandy-Lamport 我讲得比较粗。",
+        "expect": "ingest_text",
+        "got": "ingest_text",
+        "args": {
+          "text": "一面问了 Flink 反压的排查思路，我从背压和 GC 两方面答的；又问了 Checkpoint 和状态后端怎么选，Chandy-Lamport 我讲得比较粗。",
+          "source_type": "paste",
+          "draft_cards": true,
+          "max_cards": 2
+        },
+        "tool_ok": true,
+        "args_ok": null,
+        "e2e_ok": null,
+        "error": null
+      },
+      {
+        "case": "wr-02",
+        "bucket": "write",
+        "request": "帮我给题目 q-0007 建一张知识卡",
+        "expect": "draft_cards",
+        "got": "draft_cards",
+        "args": {
+          "question_ids": [
+            "q-0007"
+          ],
+          "only_uncarded": false,
+          "limit": 1
+        },
+        "tool_ok": true,
+        "args_ok": true,
+        "e2e_ok": null,
+        "error": null,
+        "args_bad": []
+      },
+      {
+        "case": "wr-03",
+        "bucket": "write",
+        "request": "给 q-0008 起草一张卡，它现在还没有笔记",
+        "expect": "draft_cards",
+        "got": "draft_cards",
+        "args": {
+          "question_ids": [
+            "q-0008"
+          ],
+          "limit": 1,
+          "only_uncarded": true
+        },
+        "tool_ok": true,
+        "args_ok": true,
+        "e2e_ok": null,
+        "error": null,
+        "args_bad": []
+      },
+      {
+        "case": "wr-04",
+        "bucket": "write",
+        "request": "这段面试记录帮我存到系统里：Kafka 为什么快，我答了顺序写、页缓存和零拷贝；追问 ISR 收缩的过程，我没答上来。",
+        "expect": "ingest_text",
+        "got": "ingest_text",
+        "args": {
+          "text": "Kafka 为什么快，我答了顺序写、页缓存和零拷贝；追问 ISR 收缩的过程，我没答上来。",
+          "source_type": "paste",
+          "draft_cards": true,
+          "max_cards": 2
+        },
+        "tool_ok": true,
+        "args_ok": null,
+        "e2e_ok": null,
+        "error": null
+      }
+    ]
+  },
+  "skipped": null
+}

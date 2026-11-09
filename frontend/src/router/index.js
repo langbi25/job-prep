@@ -15,6 +15,7 @@ const routes = [
       { path: 'questions', name: 'Questions', component: () => import('../views/Questions.vue'), meta: { title: '题目池' } },
       { path: 'cards', name: 'Cards', component: () => import('../views/Cards.vue'), meta: { title: '知识库' } },
       { path: 'ragboard', name: 'RagBoard', component: () => import('../views/RagBoard.vue'), meta: { title: 'RAG 看板' } },
+      { path: 'mcp', name: 'McpBoard', component: () => import('../views/McpBoard.vue'), meta: { title: 'MCP 看板' } },
       { path: 'mock', name: 'Mock', component: () => import('../views/Mock.vue'), meta: { title: '模拟面试' } },
       { path: 'review', name: 'Review', component: () => import('../views/Review.vue'), meta: { title: '复习中心' } },
       { path: 'approvals', name: 'Approvals', component: () => import('../views/Approvals.vue'), meta: { title: '审批中心' } },

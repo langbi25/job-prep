@@ -12,3 +12,4 @@ numpy
 
 # 规模化后启用（向量 > 1 万条时替换 SQLite 向量存储）
 # chromadb
+mcp>=2.3.0

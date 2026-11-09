@@ -5,8 +5,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import (agent, agent_actions, cards, console, flywheel, ingests, kb_tree, mock,
-                  plans, rag_board, search, stats, srs)
+from .api import (agent, agent_actions, cards, console, flywheel, ingests, kb_tree,
+                  mcp_board, mock, plans, rag_board, search, stats, srs)
 from .core.config import ensure_dirs
 from .core.db import init_db
 from .services.syncer import sync_all
@@ -50,6 +50,7 @@ app.include_router(plans.router)
 app.include_router(console.router)
 app.include_router(rag_board.router)
 app.include_router(kb_tree.router)
+app.include_router(mcp_board.router)
 
 
 @app.get("/health")

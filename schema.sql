@@ -311,3 +311,24 @@ CREATE TABLE IF NOT EXISTS card_question_links (
   UNIQUE(question_id, card_id)
 );
 CREATE INDEX IF NOT EXISTS idx_cql_card ON card_question_links(card_id);
+
+-- ============ MCP 可观测（2026-11-09）：每次工具调用一行 ============
+-- 为什么落库而不是只打日志：MCP 的调试链路是「模型 → 宿主 → server → service」，
+-- 四段里任何一段出问题，stdout 都被协议帧占满（stdio 传输下 stdout 就是通信管道），
+-- 只能靠结构化记录查。args 存摘要不存全文，避免面经原文把库撑大。
+CREATE TABLE IF NOT EXISTS mcp_calls (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts            TEXT NOT NULL,
+  tool          TEXT NOT NULL,
+  client        TEXT NOT NULL DEFAULT 'stdio',   -- stdio / http / eval / ui_try
+  args_json     TEXT NOT NULL DEFAULT '{}',
+  args_hash     TEXT,
+  status        TEXT NOT NULL,                   -- ok / error
+  error         TEXT,
+  latency_ms    INTEGER NOT NULL DEFAULT 0,
+  result_chars  INTEGER NOT NULL DEFAULT 0,
+  result_preview TEXT,
+  read_only     INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_calls_ts ON mcp_calls(ts);
+CREATE INDEX IF NOT EXISTS idx_mcp_calls_tool ON mcp_calls(tool, status);
