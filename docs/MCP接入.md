@@ -72,7 +72,32 @@ python scripts/mcp_client_smoke.py    # 用官方 SDK 客户端走一遍 stdio �
 最近一次（2026-11-09，24 用例）：契约 16/16，工具选择 24/24，参数 100%，端到端 100%，越权 0。
 样本只有 24 条，只能说明「当前工具描述没有明显歧义」，不能当生产结论。
 
-## 5. 已知限制
+## 5. 本地 harness 走 MCP 调（客户端方向）
+
+`app/services/harness.py` 原本是进程内直调 `_IMPL`。`app/mcp/client.py` 给了一个 stdio 客户端桥，
+同一个 DeepSeek 循环可以改成「工具清单来自 tools/list、执行走 tools/call」：
+
+```bash
+python scripts/harness_via_mcp.py "我今天该复习什么？顺便看看 Flink 反压我记过什么"
+python scripts/harness_via_mcp.py --bench    # 只测协议开销
+```
+
+实测（20 次均值，本机）：
+
+| 方式 | get_top_questions | get_daily_brief |
+|---|---|---|
+| 进程内直调 | 10.9 ms | 36.0 ms |
+| 走 MCP stdio | 30.8 ms | 53.6 ms |
+
+开销约 18~20 ms/次（首次含冷启动 65ms），主要来自 Windows 管道往返 + 每次调用的审计落库。
+对「查一次知识库 30ms」这个量级可以接受；对毫秒级小工具就不划算。
+
+**两条路怎么选**：
+- 评测、批量跑 → 进程内直调（快、无子进程，24 用例省 0.5 秒）；
+- 验证协议 / 演示「任何客户端都能接」→ 走 MCP（和 Claude Desktop 完全同一条路径）。
+- 生产只保留一个入口，别让同一个循环同时维护两套工具来源——那是分叉的开始。
+
+## 6. 已知限制
 
 - 单用户单库：没有多租户和行级权限，HTTP 只做了 Bearer 校验；
 - 没有实现 resource 订阅与 progress 通知，长任务（如 `ingest_text`）是同步返回；
