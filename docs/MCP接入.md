@@ -3,29 +3,67 @@
 把个人知识库接给任何支持 MCP 的宿主（Claude Desktop / Cursor / WorkBuddy），
 数据还是那份 SQLite，多的是一个标准入口。
 
-## 1. 启动
+## 1. 接入（宿主怎么连）
 
-```bash
-# stdio（本地宿主拉起，进程边界即权限边界）
-python -m app.mcp.server
+两种传输，选一种即可：**本地宿主走 stdio**（宿主自己拉起进程，零网络暴露）；
+**跨机器 / 别的 agent 走 streamable HTTP**（需要 token）。
 
-# streamable HTTP（远程接入）
-MCP_TOKEN=your-token python -m app.mcp.server --http --port 8766
-```
+### 1.1 stdio：Claude Desktop / Cursor / WorkBuddy
 
-Claude Desktop 的 `claude_desktop_config.json`：
+三家的配置形状一样，只是文件位置不同：
+
+| 宿主 | 配置文件 |
+|---|---|
+| Claude Desktop | `%APPDATA%\Claude\claude_desktop_config.json` |
+| Cursor | `~/.cursor/mcp.json`（或项目内 `.cursor/mcp.json`） |
+| WorkBuddy | `~/.workbuddy/mcp.json`（写入后在「连接器管理」右上角信任该 server） |
 
 ```json
 {
   "mcpServers": {
     "job-prep": {
-      "command": "C:/Users/<you>/.workbuddy/binaries/python/envs/default/Scripts/python.exe",
+      "command": "C:/Users/14096/.workbuddy/binaries/python/envs/default/Scripts/python.exe",
       "args": ["-m", "app.mcp.server"],
-      "cwd": "C:/Users/<you>/WorkBuddy/2026-10-25-22-38-23/job-prep"
+      "cwd": "C:/Users/14096/WorkBuddy/2026-10-25-22-38-23/job-prep"
     }
   }
 }
 ```
+
+三个字段每一个都不能省：`command` 必须是**解释器绝对路径**（宿主不会继承你的 venv）；
+`cwd` 决定 `.env` 和 `data/kb.sqlite` 的相对位置，指错就读到空库；
+`args` 少 `-m` 会变成跑一个同名目录。
+
+### 1.2 streamable HTTP：别的 agent / 远程
+
+```bash
+MCP_TOKEN=your-token python -m app.mcp.server --http --port 8766
+```
+
+客户端填 `http://127.0.0.1:8766/mcp`，请求头 `Authorization: Bearer your-token`。
+没设 `MCP_TOKEN` 只允许绑 127.0.0.1，绑非本地地址会直接拒绝启动——宁可起不来，不要静默裸奔。
+
+自检（不带 token 应 401，带 token 应回 capabilities）：
+
+```bash
+curl -s -X POST http://127.0.0.1:8766/mcp \
+  -H "Authorization: Bearer your-token" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+```
+
+### 1.3 接上之后能问什么
+
+| 你说 | 它会调 |
+|---|---|
+| 「我 Flink 反压记过什么？」 | `search_kb` →（必要时）`get_card` |
+| 「今天该复习什么？」 | `get_daily_brief` + `list_due_cards` |
+| 「我哪块最弱，这周怎么补？」 | `get_weak_topics` + `search_kb` |
+| 「哪些考点出现最多？」 | `get_top_questions` |
+| 「把这段面经收进去：…」 | `ingest_text`（只产待审批动作） |
+
+另外两个 Prompt 可直接在宿主里选：`mock_review`（面试复盘）、`card_from_question`（按题建卡）。
 
 ## 2. 暴露了什么
 
@@ -91,6 +129,22 @@ python scripts/harness_via_mcp.py --bench    # 只测协议开销
 
 开销约 18~20 ms/次（首次含冷启动 65ms），主要来自 Windows 管道往返 + 每次调用的审计落库。
 对「查一次知识库 30ms」这个量级可以接受；对毫秒级小工具就不划算。
+
+### 5.1 让内置 harness 自己切来源（不改调用方）
+
+`run_study_plan_agent` 的工具来源由 `config.HARNESS_TOOL_SOURCE` 决定，循环只有一份：
+
+```bash
+python -c "from app.services.harness import run_study_plan_agent; print(run_study_plan_agent('backend'))"
+HARNESS_TOOL_SOURCE=mcp python -c "from app.services.harness import run_study_plan_agent; print(run_study_plan_agent('backend'))"
+```
+
+`SyncMCPToolbox` 用一个后台线程跑常驻事件循环托住 MCP 会话：anyio 要求 cancel scope 的
+enter/exit 在同一任务，跨任务退出会抛 `Attempted to exit cancel scope in a different task`
+——所以会话生命周期只放在一个协程里，请求走队列进去，而不是每次调用 `asyncio.run`（那还会漏子进程）。
+
+注意两边**工具集合不完全相同**：内置 harness 6 个（含 `list_open_mistakes`，未对外暴露），
+MCP 8 个（多了 `get_card` / `draft_cards` / `ingest_text`）。切来源后模型看到的是 MCP 那一套。
 
 **两条路怎么选**：
 - 评测、批量跑 → 进程内直调（快、无子进程，24 用例省 0.5 秒）；

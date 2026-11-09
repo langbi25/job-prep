@@ -174,6 +174,31 @@ def _new_run_id() -> str:
     return f"run-{datetime.datetime.now():%Y%m%d-%H%M%S}-{random.randint(1000, 9999)}"
 
 
+class _LocalToolbox:
+    """进程内直调：清单来自 TOOLS，执行走 _IMPL。
+
+    和 MCPToolbox 保持同一套最小接口（openai_tools / call / close），
+    这样 Agent 循环只认接口，不认来源——换来源不用改循环。
+    """
+
+    def openai_tools(self) -> list[dict]:
+        return TOOLS
+
+    def call(self, name: str, args: dict) -> str:
+        return json.dumps(_IMPL[name](args), ensure_ascii=False)[:3000]
+
+    def close(self) -> None:
+        pass
+
+
+def _open_toolbox():
+    """按配置打开工具来源，返回 (toolbox, 是否需要自己关闭)。"""
+    if config.HARNESS_TOOL_SOURCE == "mcp":
+        from ..mcp.client import SyncMCPToolbox  # 局部导入：只用 local 时不必拉起 stdin/stdout 这套
+        return SyncMCPToolbox(), True
+    return _LocalToolbox(), False
+
+
 _MINUTES_RE = re.compile(r"(\d+)\s*(?:分钟|min|mins|minute)")
 
 
@@ -294,10 +319,16 @@ def _save_run(run_id: str, kind: str, status: str, steps: list, result: dict | N
         conn.close()
 
 
-def run_study_plan_agent(direction: str, max_iters: int = 6) -> dict:
-    """学习教练 Agent：自主调用工具查数据 → 产出学习计划。全程留痕。"""
+def run_study_plan_agent(direction: str, max_iters: int = 6, toolbox=None) -> dict:
+    """学习教练 Agent：自主调用工具查数据 → 产出学习计划。全程留痕。
+
+    toolbox 决定工具**从哪来**：默认按 config.HARNESS_TOOL_SOURCE 走进程内直调，
+    设成 mcp 时走 MCP 协议（见 app/mcp/client.py）。循环体本身不区分来源。
+    """
     run_id = _new_run_id()
     steps: list = []
+    box, own_box = (toolbox, False) if toolbox is not None else _open_toolbox()
+    tools = box.openai_tools()
     # prompt 从注册表渲染，不再硬编码——否则 prompt 文件里的 schema 约定形同虚设
     system, user, prompt_ver = prompts.render("study_plan", direction=direction)
     messages = [
@@ -308,7 +339,7 @@ def run_study_plan_agent(direction: str, max_iters: int = 6) -> dict:
     ]
     try:
         for i in range(max_iters):
-            msg = llm._chat_json(None, None, tools=TOOLS, messages=messages)
+            msg = llm._chat_json(None, None, tools=tools, messages=messages)
             if msg.get("tool_calls"):
                 messages.append({"role": "assistant", "content": msg.get("content") or "",
                                  "tool_calls": msg["tool_calls"]})
@@ -316,8 +347,7 @@ def run_study_plan_agent(direction: str, max_iters: int = 6) -> dict:
                     name = tc["function"]["name"]
                     try:
                         args = json.loads(tc["function"]["arguments"] or "{}")
-                        result = _IMPL[name](args)
-                        result_str = json.dumps(result, ensure_ascii=False)[:3000]
+                        result_str = box.call(name, args)
                     except Exception as e:  # noqa: BLE001
                         args, result_str = {}, f"工具执行失败: {e}"
                     steps.append({"iter": i, "tool": name, "args": args,
@@ -370,3 +400,6 @@ def run_study_plan_agent(direction: str, max_iters: int = 6) -> dict:
         _save_run(run_id, "study_plan", "error", steps,
                   {"error": str(e), "where": tb[-3:] if len(tb) >= 3 else tb})
         return {"run_id": run_id, "status": "error", "error": str(e), "trace": steps}
+    finally:
+        if own_box:  # MCP 模式下必须关会话，否则漏一个子进程
+            box.close()

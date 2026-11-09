@@ -23,6 +23,13 @@ LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
 
 APP_PORT = int(os.getenv("APP_PORT", "8765"))
 
+# ---- harness 的工具来源 ----
+# local：进程内直调 _IMPL（默认，快，评测/批量跑用）
+# mcp  ：走 MCP stdio（tools/list + tools/call，和 Claude Desktop 完全同一条路径）
+# 只作为**验证与演示**开关：生产同时维护两套工具来源就是分叉的开始，
+# 所以默认 local，切换靠环境变量，代码里只有一个循环。
+HARNESS_TOOL_SOURCE = os.getenv("HARNESS_TOOL_SOURCE", "local").strip().lower()
+
 # ---- 上下文预算（app/context）----
 # 窗口取模型侧真实值；软上限是"成本/延迟"的自我约束——能塞 64K 不代表该塞 64K。
 CTX_WINDOW = int(os.getenv("CTX_WINDOW", "64000"))       # deepseek-chat：64K 上下文 / 8K 输出

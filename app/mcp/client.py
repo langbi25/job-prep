@@ -11,9 +11,11 @@
 本地 Python、Claude Desktop、或任何别的 MCP 客户端。
 """
 import asyncio
+import concurrent.futures
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +76,101 @@ class MCPToolbox:
             return (not res.is_error), text
         except Exception as e:  # noqa: BLE001
             return False, json.dumps({"error": f"{type(e).__name__}: {e}"}, ensure_ascii=False)
+
+
+class SyncMCPToolbox:
+    """同步门面：让**同步**代码（`app/services/harness.py` 的 Agent 循环）用同一个 MCP 会话。
+
+    为什么不在每次工具调用时 `asyncio.run(...)`：
+    - 每次新建会话都要重新握手 + `tools/list`，一个 Agent 循环有 4~6 次调用，开销翻倍；
+    - stdio 会话背后是一个子进程，用完必须关，否则一次运行漏一个 python 进程。
+
+    为什么整个生命周期必须待在**同一个协程**里：
+    - MCP 的 stdio 客户端内部用 anyio 的 cancel scope，要求 enter/exit 在同一任务，
+      跨任务退出会抛 "Attempted to exit cancel scope in a different task"。
+      所以开一个后台线程跑常驻事件循环，生命周期协程只此一个，请求走队列进去。
+    """
+
+    def __init__(self, timeout: float = 60.0):
+        self._timeout = timeout
+        self._loop = asyncio.new_event_loop()
+        self._req: asyncio.Queue | None = None
+        self._done = threading.Event()
+        self._thread = threading.Thread(target=self._loop.run_forever, daemon=True,
+                                        name="mcp-stdio")
+        self._thread.start()
+        ready: concurrent.futures.Future = concurrent.futures.Future()
+        asyncio.run_coroutine_threadsafe(self._serve(ready), self._loop)
+        self._tools: list[Any] = ready.result(self._timeout)
+
+    async def _serve(self, ready: concurrent.futures.Future) -> None:
+        req: asyncio.Queue = asyncio.Queue()
+        self._req = req
+        try:
+            async with MCPToolbox() as box:
+                ready.set_result(box.openai_tools())
+                while True:
+                    item = await req.get()
+                    if item is None:  # 关闭信号
+                        return
+                    name, args, fut = item
+                    try:
+                        ok, text = await box.call(name, args)
+                    except Exception as e:  # noqa: BLE001  单次失败不能带走整个会话
+                        ok, text = False, json.dumps(
+                            {"error": f"{type(e).__name__}: {e}"}, ensure_ascii=False)
+                    if not fut.done():
+                        fut.set_result((ok, text))
+        except Exception as e:  # noqa: BLE001  握手失败要传出去，别让主线程傻等
+            if not ready.done():
+                ready.set_exception(e)
+        finally:
+            self._done.set()
+
+    def openai_tools(self) -> list[dict]:
+        return self._tools
+
+    @property
+    def names(self) -> list[str]:
+        return [t["function"]["name"] for t in self._tools]
+
+    def call(self, name: str, args: dict) -> str:
+        """返回**文本**结果，和 `_LocalToolbox.call` 同一契约。
+
+        MCP 协议层是 (is_error, text) 二元组，但 harness 的循环只认一段文本：
+        直接把元组塞进 messages，httpx 会把它序列化成 [true, "..."] 数组，
+        DeepSeek 报 422 "invalid type: boolean true, expected ChatCompletionRequestContentBlock"。
+        —— 接口形状不一致不会在类型检查里暴露，只会在服务端反序列化时报错。
+        失败也压成可读文本，不抛异常：一次工具失败不该炸穿整个 Agent 循环。
+        """
+        ok, text = self.call_raw(name, args)
+        return text[:6000] if ok else text
+
+    def call_raw(self, name: str, args: dict) -> tuple[bool, str]:
+        if self._req is None:
+            return False, json.dumps({"error": "MCP 会话未就绪"}, ensure_ascii=False)
+        fut: concurrent.futures.Future = concurrent.futures.Future()
+        self._loop.call_soon_threadsafe(self._req.put_nowait, (name, dict(args or {}), fut))
+        try:
+            return fut.result(self._timeout)
+        except concurrent.futures.TimeoutError:
+            return False, json.dumps({"error": f"工具 {name} 超时（>{self._timeout}s）"},
+                                     ensure_ascii=False)
+
+    def close(self) -> None:
+        if self._req is not None:
+            self._loop.call_soon_threadsafe(self._req.put_nowait, None)
+        self._done.wait(5)
+        self._loop.call_soon_threadsafe(self._loop.stop)
+        self._thread.join(timeout=5)
+        if not self._loop.is_running():
+            self._loop.close()
+
+    def __enter__(self) -> "SyncMCPToolbox":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
 
 
 async def _demo(question: str) -> None:
