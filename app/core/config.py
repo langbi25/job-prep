@@ -30,6 +30,14 @@ APP_PORT = int(os.getenv("APP_PORT", "8765"))
 # 所以默认 local，切换靠环境变量，代码里只有一个循环。
 HARNESS_TOOL_SOURCE = os.getenv("HARNESS_TOOL_SOURCE", "local").strip().lower()
 
+# ---- Trace 采集（OTel / OpenInference，见 app/observability/tracing.py）----
+# 空 = 完全关闭（评测/测试零开销）。配了就自动补 /v1/traces：
+#   Phoenix  ：http://localhost:6006
+#   Langfuse ：http://localhost:3000/api/public/otel  （TRACING_HEADERS 设 Basic 凭据）
+TRACING_ENDPOINT = os.getenv("TRACING_ENDPOINT", "").strip()
+TRACING_HEADERS = os.getenv("TRACING_HEADERS", "").strip()   # "k=v;k2=v2"，Langfuse 用 Basic auth
+TRACING_SERVICE = os.getenv("TRACING_SERVICE", "job-prep")
+
 # ---- 上下文预算（app/context）----
 # 窗口取模型侧真实值；软上限是"成本/延迟"的自我约束——能塞 64K 不代表该塞 64K。
 CTX_WINDOW = int(os.getenv("CTX_WINDOW", "64000"))       # deepseek-chat：64K 上下文 / 8K 输出

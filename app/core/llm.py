@@ -70,17 +70,36 @@ def _chat_json(system: str | None, user: str | None, tools: list | None = None,
         body["tool_choice"] = "auto"
     elif json_mode:
         body["response_format"] = {"type": "json_object"}
-    resp = httpx.post(
-        f"{config.LLM_BASE_URL}/chat/completions",
-        headers={"Authorization": f"Bearer {config.LLM_API_KEY}"},
-        json=body,
-        timeout=90,
-    )
-    _call_count += 1
-    resp.raise_for_status()
-    data = resp.json()
-    _last_usage = data.get("usage")
-    return data["choices"][0]["message"]
+    # LLM span：这是此前完全没留痕的一段——prompt、返回、token 数、耗时，
+    # 是排查"模型当时看到了什么"的第一现场。属性对齐 GenAI/OpenInference 语义约定。
+    from ..observability import tracing as tr
+    with tr.span("llm.chat", tr.KIND_LLM, {
+        tr.ATTR_MODEL: config.LLM_MODEL,
+        "llm.scene": tr.current_scene() or "unknown",
+        "llm.n_messages": len(messages),
+        "llm.tools": len(tools) if tools else 0,
+        "input.value": json.dumps(messages, ensure_ascii=False),
+        "input.mime_type": "application/json",
+        "llm.temperature": temperature,
+    }) as s:
+        resp = httpx.post(
+            f"{config.LLM_BASE_URL}/chat/completions",
+            headers={"Authorization": f"Bearer {config.LLM_API_KEY}"},
+            json=body,
+            timeout=90,
+        )
+        _call_count += 1
+        resp.raise_for_status()
+        data = resp.json()
+        _last_usage = data.get("usage")
+        msg = data["choices"][0]["message"]
+        if s is not None:
+            usage = _last_usage or {}
+            s.set_attribute(tr.ATTR_PROMPT_TOKENS, int(usage.get("prompt_tokens") or 0))
+            s.set_attribute(tr.ATTR_COMPLETION_TOKENS, int(usage.get("completion_tokens") or 0))
+            s.set_attribute("output.value", json.dumps(msg.get("content") or "", ensure_ascii=False))
+            s.set_attribute("output.mime_type", "application/json")
+        return msg
 
 
 def chat_parsed(system: str, user: str, **kw) -> dict:

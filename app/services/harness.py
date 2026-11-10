@@ -320,11 +320,21 @@ def _save_run(run_id: str, kind: str, status: str, steps: list, result: dict | N
 
 
 def run_study_plan_agent(direction: str, max_iters: int = 6, toolbox=None) -> dict:
-    """学习教练 Agent：自主调用工具查数据 → 产出学习计划。全程留痕。
+    """学习教练 Agent 对外入口：包一层 AGENT 根 span，trace_id 随结果返回。
 
-    toolbox 决定工具**从哪来**：默认按 config.HARNESS_TOOL_SOURCE 走进程内直调，
-    设成 mcp 时走 MCP 协议（见 app/mcp/client.py）。循环体本身不区分来源。
+    观测是横切关注点：场景标签 set 一次，链路内 llm/tool 的子 span 自动带上；
+    OTel 关闭时 agent_span 退化成本地 uuid，落库关联逻辑不因此分叉。
     """
+    from ..observability import tracing as tr
+    tr.set_scene(f"study_plan:{direction}")
+    with tr.agent_span("agent.study_plan", {"agent.direction": direction}) as trace_id:
+        result = _run_study_plan_agent(direction, max_iters, toolbox)
+        result["trace_id"] = trace_id
+        return result
+
+
+def _run_study_plan_agent(direction: str, max_iters: int = 6, toolbox=None) -> dict:
+    """原循环体（观测无关，保持纯净）。"""
     run_id = _new_run_id()
     steps: list = []
     box, own_box = (toolbox, False) if toolbox is not None else _open_toolbox()
@@ -347,7 +357,13 @@ def run_study_plan_agent(direction: str, max_iters: int = 6, toolbox=None) -> di
                     name = tc["function"]["name"]
                     try:
                         args = json.loads(tc["function"]["arguments"] or "{}")
-                        result_str = box.call(name, args)
+                        from ..observability import tracing as tr
+                        with tr.span(f"tool.{name}", tr.KIND_TOOL, {
+                                "tool.name": name, "tool.source": config.HARNESS_TOOL_SOURCE,
+                                "input.value": json.dumps(args, ensure_ascii=False)}) as s:
+                            result_str = box.call(name, args)
+                            if s is not None:
+                                s.set_attribute("output.value", result_str[:1000])
                     except Exception as e:  # noqa: BLE001
                         args, result_str = {}, f"工具执行失败: {e}"
                     steps.append({"iter": i, "tool": name, "args": args,

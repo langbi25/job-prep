@@ -152,7 +152,22 @@ def _artifacts(trace: list[dict]) -> list[dict]:
 
 
 def chat(message: str, session_id: str | None = None, mode: str = "auto") -> dict:
-    """跑一轮对话。返回 {session_id, reply, trace, artifacts, iterations, ctx}。"""
+    """跑一轮对话。返回 {session_id, reply, trace, artifacts, iterations, ctx}。
+
+    AGENT 根 span 在这里起：一轮对话触发的 assemble/retriever/llm/tool 全部挂在
+    同一棵 span 树下，trace_id 写进 ctx 账本——页面上能对上 Phoenix/Langfuse 里的瀑布。
+    """
+    from ..observability import tracing as tr
+    tr.set_scene(f"console:{mode}")
+    with tr.agent_span("agent.console", {"agent.mode": mode}) as trace_id:
+        result = _chat_inner(message, session_id, mode, trace_id)
+        if isinstance(result.get("ctx"), dict):
+            result["ctx"]["trace_id"] = trace_id
+        return result
+
+
+def _chat_inner(message: str, session_id: str | None, mode: str, trace_id: str = "") -> dict:
+    """原对话循环体（观测无关）。"""
     message = (message or "").strip()
     if not message:
         raise ValueError("消息不能为空")
@@ -196,10 +211,16 @@ def chat(message: str, session_id: str | None = None, mode: str = "auto") -> dic
                     except (ValueError, TypeError):
                         args = {}
                     fn = impl.get(name)
-                    try:
-                        result = fn(args) if fn else {"ok": False, "error": f"未知工具 {name}"}
-                    except Exception as e:  # noqa: BLE001  工具炸了要让模型看到，而不是整轮失败
-                        result = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+                    from ..observability import tracing as tr
+                    with tr.span(f"tool.{name}", tr.KIND_TOOL, {
+                            "tool.name": name, "tool.source": "console",
+                            "input.value": agent_tools.json_safe(args)}) as s:
+                        try:
+                            result = fn(args) if fn else {"ok": False, "error": f"未知工具 {name}"}
+                        except Exception as e:  # noqa: BLE001  工具炸了要让模型看到，而不是整轮失败
+                            result = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+                        if s is not None:
+                            s.set_attribute("output.value", agent_tools.json_safe(result)[:800])
                     payload = agent_tools.json_safe(result)
                     trace.append({
                         "iter": i, "tool": name,
@@ -224,7 +245,7 @@ def chat(message: str, session_id: str | None = None, mode: str = "auto") -> dic
         reply = "（模型没有返回内容）"
 
     _save(sid, "user", message, None, mode)
-    _save(sid, "assistant", reply, trace, mode, ctx.as_dict())
+    _save(sid, "assistant", reply, trace, mode, {**ctx.as_dict(), "trace_id": trace_id})
     return {"session_id": sid, "reply": reply, "trace": trace,
             "artifacts": _artifacts(trace), "iterations": len(trace),
             "prompt_version": prompt_ver, "mode": mode,

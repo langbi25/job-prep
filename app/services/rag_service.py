@@ -301,6 +301,20 @@ def llm_rerank(query: str, hits: list[dict], scope: str, top_k: int) -> list[dic
 
 def search(query: str, scope: str = "cards", top_k: int = 5, mode: str = "hybrid") -> list[dict]:
     """三档检索：fts（基线）/ hybrid（FTS+向量 RRF）/ full（+改写+rerank）。"""
+    from ..observability import tracing as tr
+    with tr.span(f"retriever.{mode}", tr.KIND_RETRIEVER, {
+            "retriever.scope": scope, "retriever.top_k": top_k,
+            "input.value": query}) as s:
+        hits = _search_inner(query, scope, top_k, mode)
+        if s is not None:
+            s.set_attribute("retriever.n_hits", len(hits))
+            s.set_attribute("output.value", json.dumps(
+                [{"id": h.get("id"), "score": h.get("score")} for h in hits[:top_k]],
+                ensure_ascii=False))
+        return hits
+
+
+def _search_inner(query: str, scope: str, top_k: int, mode: str) -> list[dict]:
     if mode == "fts":
         conn = get_conn()
         try:

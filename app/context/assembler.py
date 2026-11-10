@@ -77,7 +77,32 @@ def _drop_oldest_soft(kept: list[dict]) -> list[dict] | None:
 def assemble(session_id: str | None, system: str, user_msg: str, history: list[dict],
              budget: Budget | None = None, recent_turns: int | None = None,
              use_retrieval: bool = True, persist: bool = True) -> CtxResult:
-    """装配一次请求。永不抛异常（降级到底也要能发出请求）。"""
+    """装配一次请求。永不抛异常（降级到底也要能发出请求）。
+
+    CHAIN span 只做观测外壳：预算占用、丢了几条、降级到哪一级——
+    `degraded` 非空是自进化闭环里「上下文质量归因」的直接信号。
+    """
+    from ..observability import tracing as tr
+    with tr.span("chain.assemble", tr.KIND_CHAIN,
+                 {"chain.session_id": session_id or ""}) as s:
+        res = _assemble_inner(session_id, system, user_msg, history, budget,
+                              recent_turns, use_retrieval, persist)
+        if s is not None:
+            st = res.stats
+            s.set_attribute("chain.total_tokens", st["total"])
+            s.set_attribute("chain.budget", st["budget"])
+            s.set_attribute("chain.usage_pct", st["usage_pct"])
+            s.set_attribute("chain.dropped", st["dropped"])
+            s.set_attribute("chain.anchored", st["anchored"])
+            s.set_attribute("chain.retrieved_n", st["retrieved_n"])
+            s.set_attribute("chain.degraded", ",".join(st["degraded"]) or "-")
+            s.set_attribute("chain.fallback", st["fallback"] or "-")
+        return res
+
+
+def _assemble_inner(session_id: str | None, system: str, user_msg: str, history: list[dict],
+                    budget: Budget | None = None, recent_turns: int | None = None,
+                    use_retrieval: bool = True, persist: bool = True) -> CtxResult:
     budget = budget or default_budget()
     recent_turns = recent_turns if recent_turns is not None else config.CTX_RECENT_TURNS
     degraded: list[str] = []

@@ -78,6 +78,7 @@
                   输入 {{ m.ctx.sections.user }}<br />
                   丢弃旧消息 {{ m.ctx.dropped }} 条 · 锚定 {{ m.ctx.anchored }} 轮 ·
                   检索命中 {{ m.ctx.retrieved_n }} 条
+                  <template v-if="m.ctx.trace_id"><br />trace_id {{ m.ctx.trace_id }}（同步到 Trace 平台）</template>
                 </div>
               </template>
               <span>

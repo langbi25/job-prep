@@ -154,16 +154,24 @@ def invoke(name: str, args: dict | None, *, client: str = "stdio") -> Outcome:
         return Outcome(name, False, payload, "unknown_tool", 0, len(payload))
 
     error = None
-    try:
-        result = spec.handler(args)
-        if isinstance(result, dict) and result.get("error"):
-            error = str(result["error"])[:300]
-        payload = agent_tools.json_safe(result, MAX_RESULT_CHARS)
-        ok = error is None
-    except Exception as e:  # noqa: BLE001
-        error = f"{type(e).__name__}: {e}"[:300]
-        payload = json.dumps({"error": error, "tool": name}, ensure_ascii=False)
-        ok = False
+    from ..observability import tracing as tr
+    tr.set_scene(f"mcp:{client}")
+    with tr.span(f"tool.{name}", tr.KIND_TOOL, {
+            "tool.name": name, "tool.source": f"mcp:{client}", "tool.read_only": spec.read_only,
+            "input.value": args_json}) as s:
+        try:
+            result = spec.handler(args)
+            if isinstance(result, dict) and result.get("error"):
+                error = str(result["error"])[:300]
+            payload = agent_tools.json_safe(result, MAX_RESULT_CHARS)
+            ok = error is None
+        except Exception as e:  # noqa: BLE001
+            error = f"{type(e).__name__}: {e}"[:300]
+            payload = json.dumps({"error": error, "tool": name}, ensure_ascii=False)
+            ok = False
+        if s is not None:
+            s.set_attribute("output.value", payload[:1000])
+            s.set_attribute("tool.result_chars", len(payload))
     latency_ms = int((time.perf_counter() - t0) * 1000)
     _log(tool=name, client=client, args_json=args_json, status="ok" if ok else "error",
          error=error, latency_ms=latency_ms, payload=payload, read_only=spec.read_only)

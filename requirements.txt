@@ -13,3 +13,7 @@ numpy
 # 规模化后启用（向量 > 1 万条时替换 SQLite 向量存储）
 # chromadb
 mcp>=2.3.0
+opentelemetry-sdk>=1.45
+opentelemetry-exporter-otlp-proto-http>=1.45
+# Trace 后端（可选，本地跑 UI 时单独装）：pip install arize-phoenix
+# Langfuse（Docker compose）：见 docs/Trace采集.md
