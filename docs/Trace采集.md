@@ -35,10 +35,17 @@ TRACING_SERVICE=job-prep
 
 ```bash
 pip install arize-phoenix
-phoenix serve                       # UI http://localhost:6006
-# .env 加：TRACING_ENDPOINT=http://localhost:6006
-python -m app.mcp.server            # 或重启 uvicorn，跑一轮对话
+# 21.x 不支持 --host/--port 参数，用环境变量（首次启动约 20~30 秒）
+PHOENIX_HOST=127.0.0.1 PHOENIX_PORT=6006 python -m phoenix.server.main serve
+# .env 加：TRACING_ENDPOINT=http://127.0.0.1:6006/v1/traces
+#（写基地址也行，采集层会自动补 /v1/traces）
+# 验证入库：curl -s -X POST http://127.0.0.1:6006/graphql -H "Content-Type: application/json" \
+#   -d '{"query":"{ projects { edges { node { name traceCount } } } }"}'
 ```
+
+实测（2026-11-10）：跑一次学习教练 Agent，1 个 LLM span + 8 个工具 span 全部落进
+Phoenix，UI 里能看到完整瀑布图和每段属性。注意：Phoenix 未就绪时导出会报 404
+（BatchSpanProcessor 会重试下一批），启动后等 UI 可访问再跑业务流。
 
 ## 4. 后端二：Langfuse（装了 Docker 后十分钟切换）
 
