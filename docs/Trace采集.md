@@ -63,7 +63,39 @@ Langfuse v3 原生吃 OTLP：`docker compose up`（官方 langfuse/langfuse-comp
 
 ```bash
 python tests/test_tracing.py        # InMemorySpanExporter 断言 span 树，不需要后端
+python tests/test_phoenix_sync.py   # 双写层集成测试（需要 Phoenix 在 6006，否则整组跳过）
 ```
+
+## 6. 评测结果双写（P2）
+
+**职责边界**：本地 `run_evals` 仍是执行与门禁的唯一事实源（results-*.json / thresholds /
+RAG 看板）；Phoenix 是分析层——数据集和逐用例结果以 dataset + experiment 形式上去，
+供瀑布对照与后续归因。刻意**不走** phoenix-client 的 `run_experiment`：那会让平台的
+task runner 重新执行业务逻辑，造出评测的第二条执行路径（同坑 6 的教训）。
+
+```bash
+python scripts/run_evals.py --skip-llm --phoenix   # 评测时顺带双写（零额外 LLM 调用）
+python -m app.observability.phoenix_sync            # 重推 evals/ 最新报告（不重跑评测）
+```
+
+双写内容：4 个 golden 数据集（retrieval / search-tool / scoring / extract-judge +
+agent-tasks）+ 每个 dimension 一个 experiment，逐用例 run 带 output，
+evaluations 带 hit5 / reciprocal_rank / band_match / task_ok 等分数。
+
+**幂等设计**（重推不产生垃圾）：
+
+- 数据集按内容 hash 判断，同内容跳过上传；
+- experiment 同名先查再建（服务端不查重）；
+- 成功 run 不可变，服务端 409 → 双写层吸收，报告里显示 0 条新 run。
+
+**实测踩坑**（Phoenix 21.0.0，都已写进 `phoenix_sync.py` 模块注释）：
+
+1. `POST /v1/datasets/upload?sync=true` 返回 200 后立即 GET 该数据集可能 404
+   ——异步写入的可见性窗口。官方 client 3.7.0 的 `create_dataset` 就栽在这里；
+   所以 read-after-write 一律带重试（40 次 × 0.25s）。
+2. 不存在的路由返回 SPA HTML（200 + text/html），不能拿状态码当命中，必须验
+   content-type。
+3. inputs/outputs/metadata 必须等长，不然 422。
 
 覆盖：未配置时零开销零异常；AGENT→LLM/TOOL 父子关系；OpenInference kind 与
 GenAI token 属性；场景标签（set_scene 走 contextvar，不走参数）；长文本截断 2000 字。

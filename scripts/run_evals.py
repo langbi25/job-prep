@@ -358,6 +358,8 @@ def main():
     parser.add_argument("--gate", action="store_true")
     parser.add_argument("--stability", action="store_true",
                         help="边界用例（均分在档位边界 ±0.5 内）重评 2 次取中位数，抑制判分抖动")
+    parser.add_argument("--phoenix", action="store_true",
+                        help="评测结果双写 Phoenix（数据集+experiment，零额外 LLM 调用）")
     args = parser.parse_args()
 
     ensure_dirs()
@@ -374,6 +376,27 @@ def main():
     else:
         report["retrieval"] = eval_retrieval(("fts", "hybrid"))
     report["llm_calls"] = llm.stats()["calls"] - before
+
+    # 双写 Phoenix：本地报告照旧落盘（门禁与看板的事实源），平台只是分析层。
+    # 失败不阻断评测——观测挂了不能拖垮业务，这是可观测层的第一原则。
+    if args.phoenix:
+        try:
+            from app.observability import phoenix_sync
+            if phoenix_sync.available():
+                info = phoenix_sync.sync_eval_report(report, EVALS_DIR)
+                report["phoenix"] = {"datasets": info["datasets"],
+                                     "experiments": {k: {"id": v["id"], "runs": v["runs"]}
+                                                     for k, v in info["experiments"].items()}}
+                print("\n[Phoenix 双写]")
+                for name, d in info["datasets"].items():
+                    print(f"   dataset {name}: {'复用' if d['skipped'] else '新建'}"
+                          f"（{d['cases']} 例）")
+                for name, e in info["experiments"].items():
+                    print(f"   experiment {name}: {e['runs']} runs -> {phoenix_sync.experiment_url(e['id'])}")
+            else:
+                print("\n[Phoenix] 不可达，跳过双写（本地报告不受影响）")
+        except Exception as e:  # noqa: BLE001
+            print(f"\n[Phoenix] 双写失败（不影响本地结果）: {type(e).__name__}: {e}")
 
     out = EVALS_DIR / f"results-{datetime.datetime.now():%Y%m%d-%H%M%S}.json"
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
