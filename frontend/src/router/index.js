@@ -22,6 +22,7 @@ const routes = [
       { path: 'evolution', name: 'Evolution', component: () => import('../views/Evolution.vue'), meta: { title: '进化报告' } },
       { path: 'plans', name: 'Plans', component: () => import('../views/Plans.vue'), meta: { title: '改造方案' } },
       { path: 'retrospectives', name: 'Retrospectives', component: () => import('../views/Retrospectives.vue'), meta: { title: '复盘中心' } },
+      { path: 'observability', name: 'Observability', component: () => import('../views/Observability.vue'), meta: { title: '可观测中心' } },
     ],
   },
 ]

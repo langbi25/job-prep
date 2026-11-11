@@ -59,6 +59,29 @@ OTel 的 HTTP 导出器默认 `trust_env=True`，会读系统 `HTTP_PROXY`。本
 判据：如果 Phoenix 里 trace 缺根或缺子节点、日志里有 `Failed to export spans batch code: 404`，
 先怀疑代理，而不是后端。
 
+## 2.3 中文可观测面板（前端内置，日常看这个就够）
+
+Phoenix 原生界面是英文且独立部署（6006 端口），日常排查不必打开它。前端已内置
+**「可观测中心」**（左侧菜单，`/observability`），同一端口 8765 即可访问：
+
+- **概览统计**：累计请求数、token 用量、P50/P95 延迟
+- **最近请求列表**：中文名称（Agent 对话 / LLM 生成回答 / 工具·xxx / 知识检索 / 请求处理…）、
+  耗时、步骤数、状态；超过 3s 标橙色，异常标红
+- **调用链瀑布图**：点任意一条请求，看内部每一步的嵌套树 + 时间条，
+  可展开/折叠；点行可看该步骤的输入输出摘要（模型名、场景、检索命中数、组装 token 等）
+- **自动刷新**：默认 5s 轮询；配合 `TRACING_FLUSH_MS=500`，操作后约 1s 内即可看到新 trace
+
+实现：`app/services/obs_service.py`（Phoenix GraphQL 只读代理 + 中英翻译 + 组树）
+→ `app/api/observability.py`（`/api/obs/overview|traces|traces/{id}`，
+Phoenix 不可用时返回 `available:false` 降级而非 500）→ `frontend/src/views/Observability.vue`。
+测试：`tests/test_observability.py`（假 GraphQL 数据，不依赖真实 Phoenix）。
+
+GraphQL 踩坑记录（换 Phoenix 版本时先复核）：
+- 解析器要求参数右括号后必须有空格：`(first: 1) {` 合法，`(first:1){` 直接语法错
+- 根 span 过滤是 Python 风格：`filterCondition: "parent_id is None"`（`== null` 匹配不到）
+- `attributes` 字段返回 JSON **字符串**而非对象，需二次 `json.loads`
+- 本项目 span 属性为嵌套式：`llm.model_name` / `tool.name` / `input.value` / `retriever.n_hits`
+
 ## 3. 后端一：Phoenix（本机无 Docker 的推荐路径）
 
 ```bash
