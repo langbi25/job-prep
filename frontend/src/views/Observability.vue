@@ -8,7 +8,11 @@
           <a :href="overview?.phoenix_url || 'http://127.0.0.1:6006'" target="_blank">Phoenix 原生界面</a>
         </p>
       </div>
-      <div style="display:flex; align-items:center; gap:8px">
+      <div style="display:flex; align-items:center; gap:12px">
+        <el-radio-group v-model="scope" size="small" @change="loadAll">
+          <el-radio-button value="agent">Agent 链路（OTel 打点）</el-radio-button>
+          <el-radio-button value="all">全部请求（含 HTTP 探针）</el-radio-button>
+        </el-radio-group>
         <el-switch v-model="auto" active-text="自动刷新 5s" />
         <el-button :icon="Refresh" circle @click="loadAll" />
       </div>
@@ -26,7 +30,9 @@
       <el-row :gutter="12" style="margin-bottom: 12px">
         <el-col :span="6">
           <el-card shadow="never"><div class="stat"><div class="stat-num">{{ overview?.trace_count ?? '–' }}</div>
-            <div class="stat-label">累计请求 / 对话</div></div></el-card>
+            <div class="stat-label">{{ scope === 'agent' ? 'Agent 链路（对话/任务）' : '全部请求' }}
+              <template v-if="overview">· Agent {{ overview.trace_count_agent }} / 全部 {{ overview.trace_count_all }}</template>
+            </div></div></el-card>
         </el-col>
         <el-col :span="6">
           <el-card shadow="never"><div class="stat"><div class="stat-num">{{ fmtTokens(overview?.tokens_total) }}</div>
@@ -50,7 +56,9 @@
               <div class="card-head"><span>最近请求（{{ traces.length }}）</span>
                 <span class="err-count" v-if="errCount">🔴 异常 {{ errCount }}</span></div>
             </template>
-            <el-empty v-if="!traces.length" description="还没有 trace 数据——去 Agent 页聊一句就有了" :image-size="60" />
+            <el-empty v-if="!traces.length"
+                      :description="scope === 'agent' ? '还没有 Agent 链路——去 Agent 页聊一句就有了' : '还没有 trace 数据'"
+                      :image-size="60" />
             <div v-for="t in traces" :key="t.trace_id" class="trace-row"
                  :class="{ active: t.trace_id === current?.trace_id }" @click="openTrace(t)">
               <div class="trace-line1">
@@ -130,6 +138,7 @@ const traces = ref([])
 const current = ref(null)
 const unavailable = ref('')
 const auto = ref(true)
+const scope = ref('agent')
 const expanded = ref(null)
 const collapsed = ref(new Set())
 
@@ -189,13 +198,13 @@ function toggleExpand(n) {
 }
 
 async function loadOverview() {
-  const r = await api.get('/api/obs/overview')
+  const r = await api.get('/api/obs/overview', { params: { scope: scope.value } })
   overview.value = r
   unavailable.value = r.available ? '' : (r.reason || 'Phoenix 不可用')
 }
 
 async function loadTraces() {
-  const r = await api.get('/api/obs/traces', { params: { limit: 50 } })
+  const r = await api.get('/api/obs/traces', { params: { limit: 50, scope: scope.value } })
   if (r.available === false) { unavailable.value = r.reason || 'Phoenix 不可用'; return }
   traces.value = r.items
 }

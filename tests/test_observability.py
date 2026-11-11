@@ -18,9 +18,9 @@ def _fake_gql(responses):
 
 PROJECTS = {"projects": {"edges": [{"node": {"name": "default"}}]}}
 OVERVIEW_NODE = {"projects": {"edges": [{"node": {
-    "name": "default", "traceCount": 64, "tokenCountTotal": 12345,
-    "tokenCountPrompt": 10000, "tokenCountCompletion": 2345,
-    "p50": 120.5, "p95": 3800.0,
+    "name": "default", "totalCount": 382, "agentCount": 15,
+    "tokenCountTotal": 12345, "tokenCountPrompt": 10000, "tokenCountCompletion": 2345,
+    "p50": 2102.7, "p95": 3800.0,
 }}]}}
 
 
@@ -36,12 +36,20 @@ def test_zh_name_mapping():
 
 
 def test_overview():
-    obs_service._gql = _fake_gql([OVERVIEW_NODE])
-    r = obs_service.overview()
+    queries = []
+
+    def fake(query):
+        queries.append(query)
+        return OVERVIEW_NODE
+
+    obs_service._gql = fake
+    r = obs_service.overview("agent")
     assert r["available"] is True
-    assert r["trace_count"] == 64
-    assert r["tokens_total"] == 12345
-    assert r["latency_p50_ms"] == 120.5
+    assert r["trace_count"] == 15            # agent 口径
+    assert r["trace_count_all"] == 382
+    assert "span_kind == 'AGENT'" in queries[-1]  # 查询里带了 Agent 过滤
+    r2 = obs_service.overview("all")
+    assert r2["trace_count"] == 382          # all 口径
 
 
 def test_list_traces_mapping():
@@ -57,7 +65,7 @@ def test_list_traces_mapping():
                   "tokenCountTotal": 0, "numChildSpans": 2,
                   "trace": {"numSpans": 4, "statusCode": "ERROR"}}},]}}}]}}
     obs_service._gql = _fake_gql([spans_node])
-    r = obs_service.list_traces(10)
+    r = obs_service.list_traces(10, "agent")
     assert r["available"] is True
     a, b = r["items"]
     assert a["name_zh"] == "Agent 对话" and a["kind_zh"] == "智能体"

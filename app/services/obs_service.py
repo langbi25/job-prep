@@ -67,16 +67,12 @@ def _gql(query: str) -> dict:
     return data["data"]
 
 
-def _project_node() -> dict:
-    q = '{ projects(first: 20) { edges { node { name traceCount tokenCountTotal '
-    q += 'tokenCountPrompt tokenCountCompletion '
-    q += 'p50: latencyMsQuantile(probability: 0.5) p95: latencyMsQuantile(probability: 0.95) } } } }'
-    data = _gql(q)
-    edges = data["projects"]["edges"]
+def _pick_project(edges: list) -> dict:
+    """选目标项目：优先 default，兜底第一个非 Experiment 项目。"""
     for e in edges:
         if e["node"]["name"] == PROJECT_NAME:
             return e["node"]
-    for e in edges:  # 兜底：第一个非 Experiment 项目
+    for e in edges:
         if not e["node"]["name"].startswith("Experiment"):
             return e["node"]
     raise PhoenixUnavailable("Phoenix 中没有可用项目")
@@ -153,44 +149,60 @@ def _ts_ms(iso: str) -> float:
 
 
 # ── 对外三接口 ──────────────────────────────────────────────────────────────
-def overview() -> dict:
-    """项目级统计：总请求数、token 用量、延迟分位。"""
-    p = _project_node()
+_AGENT_FILTER = "span_kind == 'AGENT'"
+
+
+def overview(scope: str = "agent") -> dict:
+    """项目级统计。scope=agent 时只统计 Agent 链路（过滤掉 HTTP 探针噪声）。"""
+    scoped = scope == "agent"
+    cond = _AGENT_FILTER if scoped else None
+    q = '{ projects(first: 20) { edges { node { name '
+    q += f'totalCount: traceCount agentCount: traceCount(filterCondition: "{_AGENT_FILTER}") '
+    q += 'tokenCountTotal tokenCountPrompt tokenCountCompletion '
+    if scoped:
+        q += (f'p50: latencyMsQuantile(probability: 0.5, filterCondition: "{cond}") '
+              f'p95: latencyMsQuantile(probability: 0.95, filterCondition: "{cond}") ')
+    else:
+        q += 'p50: latencyMsQuantile(probability: 0.5) p95: latencyMsQuantile(probability: 0.95) '
+    q += '} } } }'
+    data = _gql(q)
+    node = _pick_project(data["projects"]["edges"])
     return {
         "available": True,
-        "project": p["name"],
+        "project": node["name"],
         "phoenix_url": PHOENIX_URL,
-        "trace_count": p.get("traceCount") or 0,
-        "tokens_total": p.get("tokenCountTotal") or 0,
-        "tokens_prompt": p.get("tokenCountPrompt") or 0,
-        "tokens_completion": p.get("tokenCountCompletion") or 0,
-        "latency_p50_ms": p.get("p50") or 0,
-        "latency_p95_ms": p.get("p95") or 0,
+        "scope": scope,
+        "trace_count": (node.get("agentCount") if scoped else node.get("totalCount")) or 0,
+        "trace_count_agent": node.get("agentCount") or 0,
+        "trace_count_all": node.get("totalCount") or 0,
+        "tokens_total": node.get("tokenCountTotal") or 0,
+        "tokens_prompt": node.get("tokenCountPrompt") or 0,
+        "tokens_completion": node.get("tokenCountCompletion") or 0,
+        "latency_p50_ms": node.get("p50") or 0,
+        "latency_p95_ms": node.get("p95") or 0,
     }
 
 
-def list_traces(limit: int = 50) -> dict:
-    """最近的请求/对话列表（根 span 视角）。"""
+def list_traces(limit: int = 50, scope: str = "agent") -> dict:
+    """最近的链路列表（根 span 视角）。
+
+    scope="agent"：只看 Agent 链路（agent.*，OTel 打点的本体）；
+    scope="all"：包含 FastAPI 自动探针产生的 HTTP 请求 span（探活/路由噪声）。
+    """
     limit = max(1, min(limit, 100))
+    cond = "parent_id is None"
+    if scope == "agent":
+        cond += f" and {_AGENT_FILTER}"
     q = (
         '{ projects(first: 20) { edges { node { name '
         f'spans(first: {limit}, sort: {{col: startTime, dir: desc}}, '
-        'filterCondition: "parent_id is None") { edges { node { '
+        f'filterCondition: "{cond}") {{ edges {{ node {{ '
         'name spanKind statusCode startTime latencyMs '
         'context { traceId spanId } tokenCountTotal numChildSpans '
         'trace { numSpans } } } } } } } }'
     )
     data = _gql(q)
-    node = None
-    for e in data["projects"]["edges"]:
-        if e["node"]["name"] == PROJECT_NAME:
-            node = e["node"]
-            break
-    if node is None:
-        for e in data["projects"]["edges"]:
-            if not e["node"]["name"].startswith("Experiment"):
-                node = e["node"]
-                break
+    node = _pick_project(data["projects"]["edges"])
     items = []
     for e in (node or {}).get("spans", {}).get("edges", []):
         n = e["node"]
@@ -224,16 +236,7 @@ def trace_detail(trace_id: str) -> dict:
         '} } } } } } } }'
     )
     data = _gql(q)
-    node = None
-    for e in data["projects"]["edges"]:
-        if e["node"]["name"] == PROJECT_NAME:
-            node = e["node"]
-            break
-    if node is None:
-        for e in data["projects"]["edges"]:
-            if not e["node"]["name"].startswith("Experiment"):
-                node = e["node"]
-                break
+    node = _pick_project(data["projects"]["edges"])
     tr = (node or {}).get("trace")
     if not tr:
         raise PhoenixUnavailable(f"trace {trace_id} 不存在（可能已被 Phoenix 清理）")

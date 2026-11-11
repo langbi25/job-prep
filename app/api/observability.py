@@ -10,17 +10,17 @@ router = APIRouter(prefix="/api/obs", tags=["observability"])
 
 
 @router.get("/overview")
-def overview():
+def overview(scope: str = "agent"):
     try:
-        return obs_service.overview()
+        return obs_service.overview(scope)
     except obs_service.PhoenixUnavailable as e:
         return {"available": False, "reason": str(e), "phoenix_url": obs_service.PHOENIX_URL}
 
 
 @router.get("/traces")
-def list_traces(limit: int = 50):
+def list_traces(limit: int = 50, scope: str = "agent"):
     try:
-        return obs_service.list_traces(limit)
+        return obs_service.list_traces(limit, scope)
     except obs_service.PhoenixUnavailable as e:
         return {"available": False, "reason": str(e), "phoenix_url": obs_service.PHOENIX_URL}
 
