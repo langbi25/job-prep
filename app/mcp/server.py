@@ -20,6 +20,7 @@ import sys
 from mcp.server.mcpserver import MCPServer
 
 from ..core.db import init_db
+from ..core import spec
 from ..services import review_service
 from . import gateway, tools
 
@@ -55,7 +56,7 @@ def brief_resource() -> str:
 
 # ---------------------------------------------------------------- prompts
 @mcp.prompt(name="mock_review", description="把最近一场模拟面试按面试官视角复盘")
-def mock_review_prompt(direction: str = "backend") -> str:
+def mock_review_prompt(direction: str = spec.default()) -> str:
     return (
         f"请以资深面试官视角复盘我最近一场 {direction} 方向的模拟面试。\n"
         "先用 get_weak_topics 取我的薄弱主题，再用 search_kb 核对对应知识卡里的要点，"

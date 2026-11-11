@@ -16,7 +16,7 @@ import json
 import time
 from pathlib import Path
 
-from ..core import config, llm
+from ..core import config, llm, spec
 from . import context_builder, harness, rag_service
 
 EVALS_DIR = config.BASE_DIR / "evals"
@@ -56,7 +56,7 @@ def _score_once(c: dict) -> tuple[float, bool]:
 
 # ---------- 1. 评分校准 ----------
 def eval_scoring(stability: bool = False) -> dict:
-    cases = _load_jsonl(EVALS_DIR / "golden_answers.jsonl")
+    cases = _load_jsonl(spec.eval_path("golden_answers"))
     correct, valid, latencies, details = 0, 0, [], []
     rescored = 0
     for c in cases:
@@ -106,7 +106,7 @@ def eval_retrieval(modes=("fts", "hybrid", "full")) -> dict:
     整套用例全命中时 hit@5 恒为 1.0，看不出 FTS/向量/rerank 各自的贡献；
     分桶后才能说明"FTS 在口语改写上塌了，向量补上，rerank 把 top1 掰正"。
     """
-    cases = _load_jsonl(EVALS_DIR / "retrieval_cases.jsonl")
+    cases = _load_jsonl(spec.eval_path("retrieval_cases"))
     kinds = sorted({c.get("kind", "unknown") for c in cases})
     out = {}
     for mode in modes:
@@ -156,8 +156,8 @@ def eval_search_tool() -> dict:
     - retrieval_cases.jsonl：有标准卡，量 hit@3 / top1
     - tool_gap_cases.jsonl：无卡的高频题，量"是否被误标成高置信度"（误标 = Agent 以为有卡）
     """
-    covered = _load_jsonl(EVALS_DIR / "retrieval_cases.jsonl")
-    gaps = _load_jsonl(EVALS_DIR / "tool_gap_cases.jsonl")
+    covered = _load_jsonl(spec.eval_path("retrieval_cases"))
+    gaps = _load_jsonl(spec.eval_path("tool_gap_cases"))
     tool = harness._IMPL["search_kb"]
 
     hits3, top1, empty_points, details = 0, 0, 0, []
@@ -223,7 +223,7 @@ def eval_extract_judge() -> dict:
     doc_type 允许一个用例给多个可接受答案：单题带"一面"语境本身就有歧义，
     强行只认一个值会让评测变成在考标注员的手感。
     """
-    cases = _load_jsonl(EVALS_DIR / "extract_judge_cases.jsonl")
+    cases = _load_jsonl(spec.eval_path("extract_judge_cases"))
     doc_ok, pairs, details = 0, [], []
     for c in cases:
         try:
@@ -265,7 +265,7 @@ def eval_extract_judge() -> dict:
 # ---------- 3. Agent 任务级 ----------
 def eval_agent_tasks() -> dict:
     """学习教练任务级评测：工具数、数据引用、时间预算三项是否都成立。"""
-    tasks = _load_jsonl(EVALS_DIR / "agent_tasks.jsonl")
+    tasks = _load_jsonl(spec.eval_path("agent_tasks"))
     details, ok_count = [], 0
     for t in tasks:
         try:
@@ -303,7 +303,7 @@ def eval_agent_tasks() -> dict:
 
 # ---------- 4. 门禁 ----------
 def gate(report: dict) -> tuple[bool, list[str]]:
-    th = json.loads((EVALS_DIR / "thresholds.json").read_text(encoding="utf-8"))
+    th = json.loads(spec.eval_path("thresholds").read_text(encoding="utf-8"))
     fails = []
     sc = report.get("scoring")
     if sc:

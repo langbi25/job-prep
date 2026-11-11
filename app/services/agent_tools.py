@@ -15,6 +15,7 @@ import contextvars
 import json
 
 from ..core.db import get_conn
+from ..core import spec
 from . import coverage_service, harness, ingest_service, multi_agent
 
 MODE = contextvars.ContextVar("agent_mode", default="auto")
@@ -197,7 +198,7 @@ def _make_study_plan(args: dict) -> dict:
     """让学习教练 Agent 跑一轮（它自己再调只读工具查数据），产出今日计划。"""
     if not _writable():
         return _denied("生成学习计划")
-    direction = str(args.get("direction") or "backend")
+    direction = str(args.get("direction") or spec.default())
     res = harness.run_study_plan_agent(direction)
     if res.get("status") != "done":
         return {"ok": False, "status": res.get("status"),
@@ -271,7 +272,7 @@ SCHEMAS = [
         "name": "make_study_plan",
         "description": "跑一轮学习教练 Agent，产出今天的学习计划（它会自己查到期卡/错题/薄弱主题）。",
         "parameters": {"type": "object", "properties": {
-            "direction": {"type": "string", "enum": ["backend", "agent", "bigdata"]}}}}},
+            "direction": {"type": "string", "enum": spec.enum()}}}}},
     {"type": "function", "function": {
         "name": "list_recent_ingests",
         "description": "最近几次采集的状态，用于回答'刚才那份处理到哪了'。",

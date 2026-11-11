@@ -1,0 +1,35 @@
+# 业务线 spec（P5）—— 跨业务通用化的单点配置。
+#
+# 设计立场：业务线定义（有哪些方向、叫什么、评测文件在哪）只在这份 YAML 里声明一次，
+# 代码一律从 app/core/spec.py 读。新增一条业务线的标准动作：
+#   1. 在 lines 下加一个条目（label + order）
+#   2. 灌对应知识库数据（ingest）
+#   3. 如评测集不同，覆盖 defaults.evals 里对应文件路径
+# 零代码改动。tests/test_spec.py 会做跨校验：评测 case 里出现的 direction 必须
+# 已在 spec 声明、工具 schema 的 enum 必须与 spec 一致——配置与代码的漂移会被测试拦住。
+version: 1
+
+defaults:
+  # API / 工具参数缺省时的业务线。历史行为是 /api/agent、/api/mock 默认 bigdata，
+  # 所以统一到此（原先 agent_tools 里默认 backend 是不一致的第三种值）。
+  direction: bigdata
+  evals:
+    # 评测文件位置也 spec 化：换文件名/换目录不用改 eval_suite 代码。
+    # lines.<id>.evals 可按业务线覆盖（将来做按线评测时生效）。
+    golden_answers: evals/golden_answers.jsonl
+    retrieval_cases: evals/retrieval_cases.jsonl
+    tool_gap_cases: evals/tool_gap_cases.jsonl
+    extract_judge_cases: evals/extract_judge_cases.jsonl
+    agent_tasks: evals/agent_tasks.jsonl
+    thresholds: evals/thresholds.json
+
+lines:
+  backend:
+    label: 后端
+    order: 1
+  bigdata:
+    label: 大数据
+    order: 2
+  agent:
+    label: Agent
+    order: 3

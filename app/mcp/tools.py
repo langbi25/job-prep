@@ -11,6 +11,7 @@ from typing import Annotated
 
 from pydantic import Field
 
+from ..core import spec
 from . import gateway
 
 
@@ -43,7 +44,7 @@ def list_due_cards(
 
 
 def get_weak_topics(
-    direction: Annotated[str | None, Field(description="方向过滤：backend / agent / bigdata")] = None,
+    direction: Annotated[str | None, Field(description=f"方向过滤：{' / '.join(spec.enum())}")] = None,
 ) -> str:
     """薄弱主题清单：被面试打低分的卡 + 近 14 天错题主题。回答「我哪里最弱」时用。"""
     return gateway.invoke("get_weak_topics", {"direction": direction}).payload

@@ -25,6 +25,8 @@ import time
 
 import httpx
 
+from ..core import spec
+
 BASE = os.getenv("PHOENIX_BASE", "http://127.0.0.1:6006").rstrip("/")
 
 # read-after-write 重试：可见性窗口实测毫秒~秒级，10s 上限足够
@@ -169,7 +171,12 @@ def sync_eval_report(report: dict, evals_dir) -> dict:
     edir = Path(evals_dir)
 
     def load(p: str) -> list[dict]:
-        f = edir / p
+        try:                      # spec 是评测文件唯一定义点（P5），优先走 spec
+            f = spec.eval_path(p.removesuffix(".jsonl"))
+        except KeyError:
+            f = edir / p
+        if not f.exists():
+            f = edir / p
         if not f.exists():
             return []
         return [json.loads(l) for l in f.read_text(encoding="utf-8").splitlines() if l.strip()]

@@ -12,7 +12,7 @@ import random
 import re
 import traceback
 
-from ..core import config, embedder, llm, prompts
+from ..core import config, embedder, llm, prompts, spec
 from ..core.db import get_conn
 from . import review_service
 
@@ -33,7 +33,7 @@ TOOLS = [
     {"type": "function", "function": {
         "name": "get_weak_topics",
         "description": "获取薄弱主题（低掌握度卡片 + 近 14 天错题主题），可按方向过滤",
-        "parameters": {"type": "object", "properties": {"direction": {"type": "string", "enum": ["backend", "agent", "bigdata"]}}}}},
+        "parameters": {"type": "object", "properties": {"direction": {"type": "string", "enum": spec.enum()}}}}},
     {"type": "function", "function": {
         "name": "get_top_questions",
         "description": "获取面经题池中的高频题目（按出现次数排序）",

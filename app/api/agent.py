@@ -1,13 +1,14 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from ..core import config
 from ..services import harness
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
 
 class PlanRequest(BaseModel):
-    direction: str = "bigdata"
+    direction: str = config.DEFAULT_DIRECTION
 
 
 @router.post("/plan")

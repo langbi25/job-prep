@@ -3,6 +3,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .spec import default as _spec_default, lines as _spec_lines
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 load_dotenv(BASE_DIR / ".env")
 
@@ -14,8 +16,11 @@ TPL_DIR = BASE_DIR / "templates"
 REPORTS_DIR = BASE_DIR / "reports"
 DB_PATH = DATA_DIR / "kb.sqlite"
 
-DOMAINS = ("backend", "agent", "bigdata", "cs")
-DIRECTIONS = ("backend", "agent", "bigdata")
+# 业务线定义的唯一定义点在 specs/business_lines.yaml（P5），此处只是导入期快照。
+# "cs" 是通用计算机基础域（review/薄弱主题归属用），不是业务线，保留在 DOMAINS。
+DIRECTIONS = _spec_lines()
+DOMAINS = DIRECTIONS + ("cs",)
+DEFAULT_DIRECTION = _spec_default()
 
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")

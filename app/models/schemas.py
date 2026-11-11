@@ -1,10 +1,12 @@
 from pydantic import BaseModel, Field
 
+from ..core import config
+
 
 # ---------- 知识卡片 ----------
 class CardCreate(BaseModel):
     title: str
-    domain: str = "backend"
+    domain: str = config.DEFAULT_DIRECTION
     topic: str = "通用"
     question: str = ""
     points: list[str] = Field(default_factory=list)

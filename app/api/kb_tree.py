@@ -17,17 +17,17 @@ import json
 from fastapi import APIRouter
 
 from ..core.db import get_conn
+from ..core import spec
 
 router = APIRouter(prefix="/api/kb", tags=["kb"])
 
-DOMAIN_LABELS = {"backend": "后端", "bigdata": "大数据", "agent": "Agent"}
-DOMAIN_ORDER = ["backend", "bigdata", "agent"]
 MISC_DOMAIN = "_misc"
 MISC_TOPIC = "_none"
 
 
 def _label(domain: str) -> str:
-    return DOMAIN_LABELS.get(domain, domain)
+    # 业务线中文名来自 spec；未知域（_misc / cs 等）回退原值。
+    return spec.label(domain, fallback=domain)
 
 
 @router.get("/tree")
@@ -134,7 +134,8 @@ def kb_tree():
 
         # ---------- 汇总每层计数 ----------
         out_domains = []
-        for key in DOMAIN_ORDER + [d for d in domains if d not in DOMAIN_ORDER and d != MISC_DOMAIN] + [MISC_DOMAIN]:
+        spec_order = list(spec.lines())
+        for key in spec_order + [d for d in domains if d not in spec_order and d != MISC_DOMAIN] + [MISC_DOMAIN]:
             if key not in domains:
                 continue
             d = domains[key]

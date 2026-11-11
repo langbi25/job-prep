@@ -29,7 +29,7 @@ import json
 import re
 from pathlib import Path
 
-from ..core import config
+from ..core import config, spec
 
 EVALS_DIR = config.BASE_DIR / "evals"
 
@@ -101,13 +101,19 @@ def _prefix_join(detail_key: str, cases: list[dict], key_field: str) -> dict | N
     return None
 
 
-def _load_case_files(evals_dir: Path = EVALS_DIR) -> dict:
-    """把 jsonl 用例装进内存，按用途分组；文件缺失不影响其它组。"""
+def _load_case_files(evals_dir: Path | None = None) -> dict:
+    """把 jsonl 用例装进内存，按用途分组；文件缺失不影响其它组。
+
+    文件路径唯一定义点在 specs/business_lines.yaml（P5）；evals_dir 仅作测试注入兜底。
+    """
     out = {"golden": [], "retrieval": [], "gap": [], "agent_tasks": []}
-    files = {"golden": "golden_answers.jsonl", "retrieval": "retrieval_cases.jsonl",
-             "gap": "tool_gap_cases.jsonl", "agent_tasks": "agent_tasks.jsonl"}
+    files = {"golden": "golden_answers", "retrieval": "retrieval_cases",
+             "gap": "tool_gap_cases", "agent_tasks": "agent_tasks"}
     for group, name in files.items():
-        p = evals_dir / name
+        try:
+            p = spec.eval_path(name)
+        except KeyError:
+            p = (evals_dir or EVALS_DIR) / f"{name}.jsonl"
         if not p.exists():
             continue
         try:

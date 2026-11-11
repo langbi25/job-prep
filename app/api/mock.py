@@ -1,13 +1,14 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from ..core import config
 from ..services import mock_service
 
 router = APIRouter(prefix="/api/mock", tags=["mock"])
 
 
 class MockStart(BaseModel):
-    direction: str = "bigdata"
+    direction: str = config.DEFAULT_DIRECTION
     persona: str = ""
     jd_text: str = ""
     question_count: int = Field(default=8, ge=1, le=15)
