@@ -82,6 +82,26 @@ GraphQL 踩坑记录（换 Phoenix 版本时先复核）：
 - `attributes` 字段返回 JSON **字符串**而非对象，需二次 `json.loads`
 - 本项目 span 属性为嵌套式：`llm.model_name` / `tool.name` / `input.value` / `retriever.n_hits`
 
+## 2.4 埋点清单与业界标准对照（2026-11-12 补全）
+
+对照 OTel GenAI 语义约定 + OpenInference 逐项补齐后的现状：
+
+| 业界标准项 | 状态 | 实现 |
+|---|---|---|
+| LLM token 消耗（prompt/completion/total） | ✅ | `llm.py` 从 API usage 双写：`gen_ai.usage.*`（OTel 约定）+ `llm.token_count.*`（OpenInference，Phoenix token 列只认这套） |
+| 首 token 延迟（TTFT） | ✅ | LLM 调用改流式（`LLM_STREAM=0` 可关），span 属性 `llm.ttft_ms` + 事件 `first_token`；流式失败自动降级非流式并记 `stream_fallback` 事件 |
+| 推理（LLM 调用） | ✅ | `llm.chat` span：模型/场景/温度/输入输出摘要 |
+| 工具调用 | ✅ | `tool.*` span（console / harness / MCP 三条路径统一） |
+| 子 Agent | ✅ | `agent.study_plan` 等嵌套在父 agent span 树下；面板显示「子Agent·xxx」 |
+| MCP | ✅ | MCP server 子进程独立成树，`tool.source=mcp:{client}` 区分 |
+| Session / 轮次 | ✅ | `session.id` + `session.turn` 上下文自动注入所有 span；Phoenix Sessions 聚合；面板「会话→轮次→trace」三级下钻；轮次 = 用户一句话触发的完整 agent 循环（客观侧口径） |
+| 动作留痕（写库/文件） | ✅ | `record_tool_action`：从工具返回值识别 inserted/drafted/retro_id/path 等，记 `tool.action` 事件 + 属性（文件修改、写了几条记录） |
+| 命令执行 | ⚠️ 不适用 | 本项目 Agent 没有执行 shell 的工具；若未来加 shell 工具，在实现里 `tr.span("tool.shell", …)` + action 打点即可 |
+| Span events 前端呈现 | ✅ | 瀑布图点行展开：事件时间线（⚡首token+TTFT / 🔢token用量 / ✏️工具动作 / ⚠️降级 / ❌异常） |
+| 消息级事件（gen_ai.system.message 等） | ❌ 有意不做 | prompt 全文已在 span 属性里（截断 2k），消息级事件会成倍膨胀存储；单机个人项目收益不成比例 |
+
+**经验**：Phoenix 的 token 统计列只认 `llm.token_count.*`——只写 `gen_ai.usage.*` 时面板永远显示 0，双写才是正解。TTFT 只有流式才拿得到，非流式调用的"总耗时"掩盖了首字等待。
+
 ## 3. 后端一：Phoenix（本机无 Docker 的推荐路径）
 
 ```bash

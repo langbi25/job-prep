@@ -177,6 +177,7 @@ def invoke(name: str, args: dict | None, *, client: str = "stdio") -> Outcome:
         if s is not None:
             s.set_attribute("output.value", payload[:1000])
             s.set_attribute("tool.result_chars", len(payload))
+            tr.record_tool_action(s, result if isinstance(result, dict) else None)
     latency_ms = int((time.perf_counter() - t0) * 1000)
     _log(tool=name, client=client, args_json=args_json, status="ok" if ok else "error",
          error=error, latency_ms=latency_ms, payload=payload, read_only=spec.read_only)

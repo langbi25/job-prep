@@ -17,6 +17,7 @@
    关着退化成本地 uuid——落库关联逻辑不因观测开关而分叉。
 """
 import contextvars
+import json
 import os
 import uuid
 from contextlib import contextmanager
@@ -135,6 +136,18 @@ def _set_attrs(s, attrs: dict | None) -> None:
             pass
 
 
+def _with_context(attrs: dict | None) -> dict:
+    """把 scene/session/turn 上下文并入 span 属性——调用方只管业务属性。"""
+    out = dict(attrs or {})
+    if _SCENE.get() and "llm.scene" not in out:
+        out.setdefault("llm.scene", _SCENE.get())
+    if _SESSION.get():
+        out[ATTR_SESSION_ID] = _SESSION.get()
+        if _TURN.get():
+            out[ATTR_SESSION_TURN] = _TURN.get()
+    return out
+
+
 @contextmanager
 def span(name: str, kind: str, attrs: dict | None = None):
     """通用 span。OTel 关闭时 yield None，业务方不需要分支。"""
@@ -144,7 +157,7 @@ def span(name: str, kind: str, attrs: dict | None = None):
         return
     with _tracer.start_as_current_span(name) as s:
         s.set_attribute(OI_KIND, kind)
-        _set_attrs(s, attrs)
+        _set_attrs(s, _with_context(attrs))
         try:
             yield s
         except Exception as e:
@@ -162,7 +175,7 @@ def agent_span(name: str, attrs: dict | None = None):
         return
     with _tracer.start_as_current_span(name) as s:
         s.set_attribute(OI_KIND, KIND_AGENT)
-        _set_attrs(s, attrs)
+        _set_attrs(s, _with_context(attrs))
         try:
             yield format(s.get_span_context().trace_id, "032x")
         except Exception as e:
@@ -179,6 +192,82 @@ def current_trace_id() -> str:
 # ---- 场景标签：观测是横切关注点，走上下文不走参数 ----
 # _chat_json 有 7 个调用方，逐个穿参会漏；入口 set 一次，链路内所有 span 自动带上。
 _SCENE: contextvars.ContextVar = contextvars.ContextVar("tracing_scene", default="")
+
+# ---- Session / 轮次：多轮对话的客观侧 ----
+# 一场会话（session）= 一次连续对话；一轮（turn）= 用户一句话触发的完整 agent 循环
+# （含多轮工具调用）。span 自动带上 session.id / session.turn，Phoenix 按 session.id
+# 聚合成 Sessions，前端据此做「会话 → 轮次 → trace」三级下钻。
+_SESSION: contextvars.ContextVar = contextvars.ContextVar("tracing_session", default="")
+_TURN: contextvars.ContextVar = contextvars.ContextVar("tracing_turn", default=0)
+
+ATTR_SESSION_ID = "session.id"
+ATTR_SESSION_TURN = "session.turn"
+
+
+def set_session(session_id: str, turn: int = 0):
+    """设置当前会话与轮次。console.chat 每轮入口调用一次；子 agent 自动继承。"""
+    return _SESSION.set(session_id or ""), _TURN.set(int(turn or 0))
+
+
+def current_session() -> str:
+    return _SESSION.get()
+
+
+def current_turn() -> int:
+    return _TURN.get()
+
+
+def add_event(s, name: str, **attrs) -> None:
+    """给 span 记一个事件（关键瞬间：首 token、写库、文件落地、降级…）。
+
+    事件和属性的区别：属性描述 span 整体，事件是 span 生命周期内的**时间点**——
+    瀑布图上展开能看到「几点几分发生了什么」。OTel 关闭或 span 为 None 时静默跳过。
+    """
+    if s is None:
+        return
+    try:
+        clean = {}
+        for k, v in attrs.items():
+            if v is None:
+                continue
+            if isinstance(v, str) and len(v) > MAX_ATTR_CHARS:
+                v = v[:MAX_ATTR_CHARS] + f"…(+{len(v) - MAX_ATTR_CHARS})"
+            clean[k] = v
+        s.add_event(name, attributes=clean)
+    except Exception:  # noqa: BLE001  观测失败绝不影响业务
+        pass
+
+
+def record_tool_action(s, result) -> None:
+    """工具动作打点：从工具返回值里识别「改了什么」，记成 span 事件 + 属性。
+
+    业界 agent 轨迹的可观测标配是动作级留痕（改了哪些文件/写了几条记录/动了哪个资源）。
+    本项目的写动作统一体现在工具返回值上（inserted/drafted/retro_id/path…），
+    这里做通用识别，避免每个工具实现都手动埋。
+    """
+    if s is None or not isinstance(result, dict):
+        return
+    try:
+        action = {}
+        for k in ("inserted", "drafted", "approved", "rejected", "deleted"):
+            v = result.get(k)
+            if isinstance(v, list) and v:
+                action[f"写入 {k}"] = len(v)
+            elif isinstance(v, int) and v:
+                action[f"写入 {k}"] = v
+        for k in ("retro_id", "run_id", "action_id", "question_id"):
+            if result.get(k):
+                action[k] = str(result[k])[:60]
+        files = result.get("path") or result.get("paths") or result.get("file")
+        if files:
+            action["files"] = files if isinstance(files, str) else json.dumps(files, ensure_ascii=False)[:200]
+        if not action:
+            return
+        parts = "；".join(f"{k}={v}" for k, v in action.items())
+        s.set_attribute("tool.action", parts[:300])
+        add_event(s, "tool.action", **{str(k): str(v) for k, v in action.items()})
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def set_scene(scene: str):

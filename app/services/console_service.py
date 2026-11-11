@@ -156,10 +156,16 @@ def chat(message: str, session_id: str | None = None, mode: str = "auto") -> dic
 
     AGENT 根 span 在这里起：一轮对话触发的 assemble/retriever/llm/tool 全部挂在
     同一棵 span 树下，trace_id 写进 ctx 账本——页面上能对上 Phoenix/Langfuse 里的瀑布。
+    session/轮次：一场会话（session_id）= 多轮对话；一轮（turn）= 用户一句话触发的
+    完整 agent 循环。轮次号 = 历史用户消息数 + 1，span 自动带 session.id/session.turn，
+    Phoenix 按 session.id 聚成 Sessions，面板做「会话 → 轮次 → trace」下钻。
     """
     from ..observability import tracing as tr
     tr.set_scene(f"console:{mode}")
-    with tr.agent_span("agent.console", {"agent.mode": mode}) as trace_id:
+    # input.value 让 Phoenix 的 Sessions 显示"这轮用户问了什么"
+    with tr.agent_span("agent.console", {"agent.mode": mode,
+                                         "input.value": (message or "")[:2000],
+                                         "input.mime_type": "text"}) as trace_id:
         result = _chat_inner(message, session_id, mode, trace_id)
         if isinstance(result.get("ctx"), dict):
             result["ctx"]["trace_id"] = trace_id
@@ -177,6 +183,10 @@ def _chat_inner(message: str, session_id: str | None, mode: str, trace_id: str =
     mode = mode if mode in MODE_DESC else "auto"
     sid = session_id or new_session_id()
     history_msgs = _history(sid)
+    # 轮次号：客观侧以"用户消息数"为准——一句"继续"也是新的一轮
+    turn = sum(1 for m in history_msgs if m.get("role") == "user") + 1
+    from ..observability import tracing as tr
+    tr.set_session(sid, turn)
 
     system, user_msg, prompt_ver = prompts.render(
         "console_agent",
@@ -221,6 +231,7 @@ def _chat_inner(message: str, session_id: str | None, mode: str, trace_id: str =
                             result = {"ok": False, "error": f"{type(e).__name__}: {e}"}
                         if s is not None:
                             s.set_attribute("output.value", agent_tools.json_safe(result)[:800])
+                            tr.record_tool_action(s, result)
                     payload = agent_tools.json_safe(result)
                     trace.append({
                         "iter": i, "tool": name,
@@ -246,7 +257,7 @@ def _chat_inner(message: str, session_id: str | None, mode: str, trace_id: str =
 
     _save(sid, "user", message, None, mode)
     _save(sid, "assistant", reply, trace, mode, {**ctx.as_dict(), "trace_id": trace_id})
-    return {"session_id": sid, "reply": reply, "trace": trace,
+    return {"session_id": sid, "turn": turn, "reply": reply, "trace": trace,
             "artifacts": _artifacts(trace), "iterations": len(trace),
             "prompt_version": prompt_ver, "mode": mode,
             "ctx": ctx.as_dict(), "inflight": inflight}

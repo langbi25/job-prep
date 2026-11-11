@@ -94,8 +94,52 @@ def test_reconfigure_after_reset():
     print("ok reset 后可重新配置")
 
 
+def test_session_turn_and_events():
+    """session/轮次注入 + span events：多轮对话可观测的客观侧。"""
+    tr._reset_for_test()
+    exp = InMemorySpanExporter()
+    tr.configure(endpoint="http://localhost:9999", exporter=exp, service_name="t3")
+
+    tr.set_session("cs-20261112-000001", 3)
+    with tr.agent_span("agent.console", {"agent.mode": "auto"}):
+        with tr.span("llm.chat", tr.KIND_LLM, {}) as s:
+            tr.add_event(s, "first_token", ttft_ms=321.5)
+            tr.record_tool_action(s, {"inserted": ["q1", "q2"], "skipped": 1})
+        with tr.span("tool.search_kb", tr.KIND_TOOL, {}) as s:
+            tr.record_tool_action(s, {"path": "docs/x.md"})  # 文件动作
+        with tr.span("tool.readonly", tr.KIND_TOOL, {}) as s:
+            tr.record_tool_action(s, {"ok": True})           # 纯读：不应产生动作
+    spans = {s.name: s for s in exp.get_finished_spans()}
+
+    root, llm, tool = spans["agent.console"], spans["llm.chat"], spans["tool.search_kb"]
+    # 全部 span 自动带 session.id / session.turn（子 span 继承，不用穿参）
+    for s in (root, llm, tool):
+        assert s.attributes[tr.ATTR_SESSION_ID] == "cs-20261112-000001"
+        assert s.attributes[tr.ATTR_SESSION_TURN] == 3
+    # 首 token 事件
+    ev_names = [e.name for e in llm.events]
+    assert "first_token" in ev_names
+    ft = next(e for e in llm.events if e.name == "first_token")
+    assert ft.attributes["ttft_ms"] == 321.5
+    # 动作打点：写动作有事件，纯读没有
+    assert "tool.action" in ev_names
+    act = next(e for e in llm.events if e.name == "tool.action")
+    assert act.attributes["写入 inserted"] == "2"
+    assert llm.attributes["tool.action"].startswith("写入 inserted")
+    assert "tool.action" in [e.name for e in tool.events]
+    assert "tool.action" not in [e.name for e in spans["tool.readonly"].events]
+    # 会话上下文可清（新一轮换会话时不残留）
+    tr.set_session("", 0)
+    with tr.span("llm.chat", tr.KIND_LLM, {}) as s2:
+        pass
+    s2 = [x for x in exp.get_finished_spans() if x.name == "llm.chat"][-1]
+    assert tr.ATTR_SESSION_ID not in s2.attributes
+    print("ok session/轮次注入 + 首token/动作事件")
+
+
 if __name__ == "__main__":
     test_disabled_by_default()
     test_span_tree_and_semantics()
     test_reconfigure_after_reset()
-    print("3/3 通过")
+    test_session_turn_and_events()
+    print("4/4 通过")

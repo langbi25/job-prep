@@ -5,7 +5,9 @@
 未配置 LLM_API_KEY 时依赖 LLM 的功能抛 RuntimeError，其余功能不受影响。
 """
 import json
+import os
 import re
+import time
 
 import httpx
 
@@ -50,6 +52,64 @@ def extract_json(text: str) -> dict:
     raise ValueError(f"无法从模型输出中解析出 JSON：{raw[:200]}")
 
 
+def _consume_stream(body: dict):
+    """流式消费一次 chat/completions。返回 (msg, usage, ttft_ms)。
+
+    为什么流式：非流式拿不到首 token 时间（TTFT），而 TTFT 是 LLM 可观测的
+    核心体验指标——用户感知的"卡"取决于 TTFT + 生成速度，不是总耗时。
+    stream_options.include_usage 让最后一个 chunk 带真实 usage（DeepSeek/OpenAI 均支持）。
+    tool_calls 的 delta 按 index 聚合：首个 delta 带 id/name，后续 chunk 只补 arguments 片段。
+    """
+    body = {**body, "stream": True, "stream_options": {"include_usage": True}}
+    t0 = time.perf_counter()
+    ttft = None
+    content_parts: list[str] = []
+    tool_calls: dict[int, dict] = {}
+    usage = None
+    with httpx.stream(
+        "POST", f"{config.LLM_BASE_URL}/chat/completions",
+        headers={"Authorization": f"Bearer {config.LLM_API_KEY}"},
+        json=body, timeout=90,
+    ) as resp:
+        resp.raise_for_status()
+        for line in resp.iter_lines():
+            if not line or not line.startswith("data:"):
+                continue
+            payload = line[5:].strip()
+            if payload == "[DONE]":
+                break
+            try:
+                chunk = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            if chunk.get("usage"):
+                usage = chunk["usage"]
+            for ch in chunk.get("choices") or []:
+                delta = ch.get("delta") or {}
+                if delta.get("content"):
+                    if ttft is None:
+                        ttft = round((time.perf_counter() - t0) * 1000, 1)
+                    content_parts.append(delta["content"])
+                for tc in delta.get("tool_calls") or []:
+                    idx = tc.get("index") or 0
+                    acc = tool_calls.setdefault(
+                        idx, {"id": "", "type": "function",
+                              "function": {"name": "", "arguments": ""}})
+                    if tc.get("id"):
+                        acc["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        acc["function"]["name"] = fn["name"]
+                    if fn.get("arguments"):
+                        if ttft is None:
+                            ttft = round((time.perf_counter() - t0) * 1000, 1)
+                        acc["function"]["arguments"] += fn["arguments"]
+    msg = {"content": "".join(content_parts) or None}
+    if tool_calls:
+        msg["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
+    return msg, usage, ttft
+
+
 def _chat_json(system: str | None, user: str | None, tools: list | None = None,
                messages: list | None = None, temperature: float = 0.1,
                json_mode: bool = True) -> dict:
@@ -70,9 +130,10 @@ def _chat_json(system: str | None, user: str | None, tools: list | None = None,
         body["tool_choice"] = "auto"
     elif json_mode:
         body["response_format"] = {"type": "json_object"}
-    # LLM span：这是此前完全没留痕的一段——prompt、返回、token 数、耗时，
+    # LLM span：这是此前完全没留痕的一段——prompt、返回、token 数、耗时、TTFT，
     # 是排查"模型当时看到了什么"的第一现场。属性对齐 GenAI/OpenInference 语义约定。
     from ..observability import tracing as tr
+    stream = os.getenv("LLM_STREAM", "1") != "0"
     with tr.span("llm.chat", tr.KIND_LLM, {
         tr.ATTR_MODEL: config.LLM_MODEL,
         "llm.scene": tr.current_scene() or "unknown",
@@ -81,22 +142,55 @@ def _chat_json(system: str | None, user: str | None, tools: list | None = None,
         "input.value": json.dumps(messages, ensure_ascii=False),
         "input.mime_type": "application/json",
         "llm.temperature": temperature,
+        "llm.stream": stream,
     }) as s:
-        resp = httpx.post(
-            f"{config.LLM_BASE_URL}/chat/completions",
-            headers={"Authorization": f"Bearer {config.LLM_API_KEY}"},
-            json=body,
-            timeout=90,
-        )
+        usage = None
+        try:
+            if stream:
+                msg, usage, ttft = _consume_stream(body)
+                if s is not None and ttft is not None:
+                    s.set_attribute("llm.ttft_ms", ttft)
+                    tr.add_event(s, "first_token", ttft_ms=ttft)
+            else:
+                resp = httpx.post(
+                    f"{config.LLM_BASE_URL}/chat/completions",
+                    headers={"Authorization": f"Bearer {config.LLM_API_KEY}"},
+                    json=body, timeout=90,
+                )
+                _call_count += 1
+                resp.raise_for_status()
+                data = resp.json()
+                usage = data.get("usage")
+                msg = data["choices"][0]["message"]
+        except Exception:
+            if stream:
+                # 流式失败降级非流式重试一次：可用性优先于观测细节
+                tr.add_event(s, "stream_fallback", reason="stream failed, retry non-stream")
+                resp = httpx.post(
+                    f"{config.LLM_BASE_URL}/chat/completions",
+                    headers={"Authorization": f"Bearer {config.LLM_API_KEY}"},
+                    json=body, timeout=90,
+                )
+                _call_count += 1
+                resp.raise_for_status()
+                data = resp.json()
+                usage = data.get("usage")
+                msg = data["choices"][0]["message"]
+            else:
+                raise
         _call_count += 1
-        resp.raise_for_status()
-        data = resp.json()
-        _last_usage = data.get("usage")
-        msg = data["choices"][0]["message"]
+        _last_usage = usage
         if s is not None:
-            usage = _last_usage or {}
-            s.set_attribute(tr.ATTR_PROMPT_TOKENS, int(usage.get("prompt_tokens") or 0))
-            s.set_attribute(tr.ATTR_COMPLETION_TOKENS, int(usage.get("completion_tokens") or 0))
+            u = usage or {}
+            pt, ct = int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)
+            # 双写：gen_ai.* 是 OTel GenAI 语义约定；llm.token_count.* 是 OpenInference
+            # 约定（Phoenix 的 token 统计列只认这一套——只写 gen_ai 时面板永远显示 0）。
+            s.set_attribute(tr.ATTR_PROMPT_TOKENS, pt)
+            s.set_attribute(tr.ATTR_COMPLETION_TOKENS, ct)
+            s.set_attribute("llm.token_count.prompt", pt)
+            s.set_attribute("llm.token_count.completion", ct)
+            s.set_attribute("llm.token_count.total", pt + ct)
+            tr.add_event(s, "gen_ai.usage", prompt_tokens=pt, completion_tokens=ct)
             s.set_attribute("output.value", json.dumps(msg.get("content") or "", ensure_ascii=False))
             s.set_attribute("output.mime_type", "application/json")
         return msg

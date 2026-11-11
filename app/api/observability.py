@@ -25,6 +25,22 @@ def list_traces(limit: int = 50, scope: str = "agent"):
         return {"available": False, "reason": str(e), "phoenix_url": obs_service.PHOENIX_URL}
 
 
+@router.get("/sessions")
+def list_sessions(limit: int = 20):
+    try:
+        return obs_service.list_sessions(limit)
+    except obs_service.PhoenixUnavailable as e:
+        return {"available": False, "reason": str(e), "phoenix_url": obs_service.PHOENIX_URL}
+
+
+@router.get("/sessions/{session_id}")
+def session_detail(session_id: str):
+    try:
+        return obs_service.session_detail(session_id)
+    except obs_service.PhoenixUnavailable as e:
+        return {"available": False, "reason": str(e), "phoenix_url": obs_service.PHOENIX_URL}
+
+
 @router.get("/traces/{trace_id}")
 def trace_detail(trace_id: str):
     try:
