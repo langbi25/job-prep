@@ -362,3 +362,22 @@ CREATE TABLE IF NOT EXISTS prompt_versions (
   decided_at     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_prompt_versions_name ON prompt_versions(prompt_name, status);
+
+-- ============ 复盘中心（2026-11-11，P6） ============
+-- 复盘文档（对话/建设过程/项目实践总结）→ 考点提炼 → 建题入池 → 建卡走审批。
+-- 不变量与全项目一致：题目可直入池（题池本来就是待办池，面经抽题同款），
+-- 卡片绝不直写——create_card 一律进 agent_actions(pending) 等人审批。
+CREATE TABLE IF NOT EXISTS retrospectives (
+  id            TEXT PRIMARY KEY,
+  title         TEXT NOT NULL,
+  source_path   TEXT,                              -- 若来自 docs/ 下文件，记录出处
+  content       TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'ingested',  -- ingested/extracted/built/cards_done/failed
+  points_json   TEXT,                              -- 考点 [{point, why, ask, topic}]
+  questions_json TEXT,                             -- 生成的题目 [{text, qtype, topic, point}]
+  question_ids_json TEXT DEFAULT '[]',             -- 已入池的题目 id（建卡用）
+  cards_json    TEXT,                              -- 起草的卡草稿 [{action_id, title}]
+  error         TEXT,                              -- failed 时的原因
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);

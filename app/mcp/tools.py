@@ -79,5 +79,19 @@ def ingest_text(
         "max_cards": max_cards}).payload
 
 
+def ingest_retrospective(
+    content: Annotated[str | None, Field(description="复盘文档全文（与 source_path 二选一）")] = None,
+    source_path: Annotated[str | None, Field(description="文档相对项目根的路径，如 docs/复盘-自进化闭环.md")] = None,
+    title: Annotated[str | None, Field(description="文档标题，缺省取首行")] = None,
+    build_cards: Annotated[bool, Field(description="是否顺手起草卡（进审批）")] = True,
+    card_limit: Annotated[int, Field(description="最多起草几张，默认 2", ge=1, le=4)] = 2,
+) -> str:
+    """复盘文档一条龙（写操作）：提炼面试考点 → 题目入池 → 起草待审卡。
+    用户说「把这份复盘/总结变成题目和卡片」时调。"""
+    return gateway.invoke("ingest_retrospective", {
+        "content": content, "source_path": source_path, "title": title,
+        "build_cards": build_cards, "card_limit": card_limit}).payload
+
+
 REGISTERED = [search_kb, get_card, get_daily_brief, list_due_cards, get_weak_topics,
-              get_top_questions, draft_cards, ingest_text]
+              get_top_questions, draft_cards, ingest_text, ingest_retrospective]

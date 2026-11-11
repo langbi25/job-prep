@@ -16,7 +16,7 @@ import json
 
 from ..core.db import get_conn
 from ..core import spec
-from . import coverage_service, harness, ingest_service, multi_agent
+from . import coverage_service, harness, ingest_service, multi_agent, retrospective_service
 
 MODE = contextvars.ContextVar("agent_mode", default="auto")
 
@@ -239,6 +239,35 @@ def _list_pending_actions(args: dict) -> list:
     return out
 
 
+def _ingest_retrospective(args: dict) -> dict:
+    """复盘文档一条龙：导入→提炼考点→建题入池→起草卡（进审批队列）。"""
+    if not _writable():
+        return _denied("导入复盘文档")
+    content = str(args.get("content") or "").strip()
+    source_path = str(args.get("source_path") or "").strip()
+    if not content and source_path:
+        from pathlib import Path
+        p = Path(source_path)
+        if not p.is_absolute():
+            p = harness.config.BASE_DIR / p
+        if not p.exists():
+            return {"ok": False, "error": f"文件不存在: {p}"}
+        content = p.read_text(encoding="utf-8")
+    if not content:
+        return {"ok": False, "error": "content 与 source_path 至少给一个"}
+    try:
+        out = retrospective_service.run_pipeline(
+            content, title=str(args.get("title") or ""),
+            source_path=source_path or None,
+            build_cards_flag=bool(args.get("build_cards", True)),
+            card_limit=max(1, min(int(args.get("card_limit") or 2), 4)))
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    if out.get("error"):
+        return {"ok": False, **out}
+    return {"ok": True, **out}
+
+
 SCHEMAS = [
     {"type": "function", "function": {
         "name": "ingest_text",
@@ -283,6 +312,16 @@ SCHEMAS = [
         "description": "待审批的 Agent 动作（建卡/合并/归档/提前复习）。用于提醒用户去审批中心。",
         "parameters": {"type": "object", "properties": {
             "limit": {"type": "integer", "description": "默认 10"}}}}},
+    {"type": "function", "function": {
+        "name": "ingest_retrospective",
+        "description": "复盘文档一条龙：提炼面试考点→生成题目入池→起草知识卡（卡只进审批队列，不直接落库）。用户说'把这份复盘变成题目和卡片'时调用。",
+        "parameters": {"type": "object", "properties": {
+            "content": {"type": "string", "description": "复盘文档全文（与 source_path 二选一）"},
+            "source_path": {"type": "string", "description": "文档相对项目根的路径，如 docs/复盘-自进化闭环.md"},
+            "title": {"type": "string", "description": "文档标题，缺省取首行"},
+            "build_cards": {"type": "boolean", "description": "是否顺手起草卡（进审批），默认 true"},
+            "card_limit": {"type": "integer", "description": "最多起草几张，默认 2"}},
+            "required": []}}},
 ]
 
 IMPL = {
@@ -293,9 +332,11 @@ IMPL = {
     "make_study_plan": _make_study_plan,
     "list_recent_ingests": _list_recent_ingests,
     "list_pending_actions": _list_pending_actions,
+    "ingest_retrospective": _ingest_retrospective,
 }
 
-WRITE_TOOLS = {"ingest_text", "confirm_ingest", "analyze_coverage", "draft_cards", "make_study_plan"}
+WRITE_TOOLS = {"ingest_text", "confirm_ingest", "analyze_coverage", "draft_cards", "make_study_plan",
+               "ingest_retrospective"}
 
 
 def json_safe(obj, limit: int = 2600) -> str:

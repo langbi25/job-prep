@@ -20,7 +20,7 @@ from app.mcp.server import mcp  # noqa: E402
 def test_registry_consistency():
     """注册表、暴露签名、spec 三者必须一一对应——不然会出现「列了工具但没有实现」。"""
     names = [fn.__name__ for fn in tools.REGISTERED]
-    assert len(names) == 8, names
+    assert len(names) == 9, names
     assert set(names) == set(gateway.SPECS), set(names) ^ set(gateway.SPECS)
     listed = [t.name for t in asyncio.run(mcp.list_tools())]
     assert listed == names, (listed, names)
@@ -35,7 +35,7 @@ def test_read_write_boundary():
     write = set(gateway.SPECS) - read
     assert read == {"search_kb", "get_card", "get_daily_brief", "list_due_cards",
                     "get_weak_topics", "get_top_questions"}, read
-    assert write == {"draft_cards", "ingest_text"}, write
+    assert write == {"draft_cards", "ingest_text", "ingest_retrospective"}, write
 
 
 def test_invoke_logs_and_unknown_tool():
@@ -83,8 +83,8 @@ def test_eval_scorer():
 
 def test_board_payload_shape():
     b = mcp_board.mcp_board()
-    assert b["status"]["tools"] == 8
-    assert b["status"]["read_only"] == 6 and b["status"]["write"] == 2
+    assert b["status"]["tools"] == 9
+    assert b["status"]["read_only"] == 6 and b["status"]["write"] == 3
     assert "kb://card/{card_id}" in b["status"]["resources"]
     assert {"name", "summary", "read_only"} <= set(b["tools"][0])
     stats = b["stats"]

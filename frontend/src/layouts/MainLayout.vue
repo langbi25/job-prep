@@ -17,6 +17,7 @@
         <el-menu-item index="/approvals"><el-icon><Checked /></el-icon>审批中心</el-menu-item>
         <el-menu-item index="/plans"><el-icon><Tools /></el-icon>改造方案</el-menu-item>
         <el-menu-item index="/evolution"><el-icon><TrendCharts /></el-icon>进化报告</el-menu-item>
+        <el-menu-item index="/retrospectives"><el-icon><Reading /></el-icon>复盘中心</el-menu-item>
       </el-menu>
       <div class="backend-status">
         <el-tag :type="healthy ? 'success' : 'danger'" size="small" effect="dark">

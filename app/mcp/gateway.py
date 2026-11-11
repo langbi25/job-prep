@@ -87,6 +87,11 @@ SPECS: dict[str, ToolSpec] = {
     "ingest_text": ToolSpec(
         "ingest_text", "投喂面经原文：存档→抽题→过质量闸门→入池→起草待审卡（写操作）", False,
         agent_tools.IMPL["ingest_text"], {"text": "面经原文…", "draft_cards": True}),
+    "ingest_retrospective": ToolSpec(
+        "ingest_retrospective",
+        "复盘文档一条龙：提炼面试考点→题目入池→起草待审卡（写操作，产物走审批）",
+        False, agent_tools.IMPL["ingest_retrospective"],
+        {"source_path": "docs/复盘-自进化闭环.md", "build_cards": True}),
 }
 
 
