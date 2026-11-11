@@ -332,3 +332,33 @@ CREATE TABLE IF NOT EXISTS mcp_calls (
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_calls_ts ON mcp_calls(ts);
 CREATE INDEX IF NOT EXISTS idx_mcp_calls_tool ON mcp_calls(tool, status);
+
+-- ============ Prompt 版本表（2026-11-11，P4 优化执行器） ============
+-- prompt 是"源代码"：优化器改 prompt = 改逻辑，必须可追溯、可回滚。
+-- 运行时唯一事实源是 prompts/*.yaml 文件；本表记录候选版本的生命周期与评测证据：
+-- candidate（已起草未上机）→ active（gate+基线对比通过，文件已换成该版本）
+--                          → rolled_back（评测不过或异常，文件已恢复快照）
+-- retired（被更新的 active 版本顶掉）/ rejected（起草校验没过，未上机）。
+CREATE TABLE IF NOT EXISTS prompt_versions (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  prompt_name    TEXT NOT NULL,
+  version        INTEGER NOT NULL,               -- 候选版本号 = 父版本 + 1
+  parent_version INTEGER,
+  system_text    TEXT NOT NULL,
+  user_text      TEXT NOT NULL,
+  output_schema  TEXT,
+  description    TEXT DEFAULT '',
+  status         TEXT NOT NULL DEFAULT 'candidate',
+  source         TEXT NOT NULL DEFAULT 'optimizer',  -- optimizer / manual / test
+  reason         TEXT,                            -- 归因依据：哪些根因/失败触发了这次改写
+  changes_json   TEXT,                            -- LLM 自述的修改点 + rationale
+  snapshot_path  TEXT,                            -- 上机前的文件快照（回滚依据）
+  eval_report    TEXT,                            -- 评测报告路径
+  gate_passed    INTEGER,                         -- 1/0/NULL（未评测）
+  baseline_metrics TEXT,                          -- 基线指标 json（对比证据）
+  regressions    TEXT,                            -- 基线回归明细 json（回滚时非空）
+  created_at     TEXT NOT NULL,
+  evaluated_at   TEXT,
+  decided_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_versions_name ON prompt_versions(prompt_name, status);
