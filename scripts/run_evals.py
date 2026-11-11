@@ -291,6 +291,9 @@ def eval_agent_tasks() -> dict:
         plan_text = json.dumps(items, ensure_ascii=False)
         total_min = plan["total_minutes"]
         refs_ok = all(m in plan_text for m in t.get("must_mention", []))
+        # 记下具体缺了哪个引用：归因引擎（P3）靠这个字段定位到"没引用哪块数据"，
+        # 否则归因只能拿到布尔 checks，还得回查计划全文。
+        missed = [m for m in t.get("must_mention", []) if m not in plan_text]
         checks = {
             "tools": len(tools) >= t.get("min_tools", 2),
             "data_referenced": refs_ok and len(items) >= 2,
@@ -299,7 +302,8 @@ def eval_agent_tasks() -> dict:
         ok = all(checks.values())
         ok_count += ok
         details.append({"task": t["task"], "ok": ok, "checks": checks,
-                        "tools": sorted(tools), "items": len(items), "minutes": total_min})
+                        "tools": sorted(tools), "items": len(items), "minutes": total_min,
+                        "missed_mentions": missed})
     return {"cases": len(tasks), "success_rate": round(ok_count / len(tasks), 3), "details": details}
 
 
@@ -360,6 +364,8 @@ def main():
                         help="边界用例（均分在档位边界 ±0.5 内）重评 2 次取中位数，抑制判分抖动")
     parser.add_argument("--phoenix", action="store_true",
                         help="评测结果双写 Phoenix（数据集+experiment，零额外 LLM 调用）")
+    parser.add_argument("--attribute", action="store_true",
+                        help="评测后跑归因引擎（P3）：失败 → 根因聚类，落 evals/attribution-*.json")
     args = parser.parse_args()
 
     ensure_dirs()
@@ -448,6 +454,24 @@ def main():
                 print(f"   ERROR {d['id']}: {d['error']}")
             elif not d["doc_ok"] or d["mismatch"]:
                 print(f"   MISS {d['id']}  doc={d['doc']} pred={d['pred']} exp={d['exp']}")
+
+    # 归因（P3）：评测回答"挂没挂"，归因回答"为什么挂"。
+    # 纯规则、零 LLM 调用，失败不阻断评测主流程——闭环里每一环都不能拖垮上一环。
+    if args.attribute:
+        try:
+            from app.services import attribution
+            ar = attribution.build_failure_report(eval_report=report)
+            ar_path = attribution.save_failure_report(ar)
+            report["attribution"] = {"failures": ar["summary"]["failures"],
+                                     "top_issues": ar["top_issues"],
+                                     "report": ar_path.name}
+            out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+            print(f"\n[归因] 失败 {ar['summary']['failures']} 条 / 扫描 {ar['summary']['cases_scanned']}"
+                  f" → {ar_path.name}")
+            for i, t in enumerate(ar["top_issues"], 1):
+                print(f"   {i}. [{t['severity']}] {t['name']} × {t['count']}（{t['sources']}）")
+        except Exception as e:  # noqa: BLE001
+            print(f"\n[归因] 失败（不影响评测结果）: {type(e).__name__}: {e}")
 
     if args.gate:
         passed, fails = gate(report)

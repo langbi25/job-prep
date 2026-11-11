@@ -1,0 +1,331 @@
+{
+  "generated_at": "2026-11-11T11:32:10",
+  "source": "in-memory",
+  "engine": "attribution-v1(rules)",
+  "summary": {
+    "cases_scanned": 57,
+    "failures": 12,
+    "failure_rate": 0.211,
+    "by_severity": {
+      "high": 10,
+      "medium": 2,
+      "low": 0
+    }
+  },
+  "failures": [
+    {
+      "source": "retrieval",
+      "case": "进程挂了内存里的东西还能找回来吗",
+      "rule": "retrieval_miss",
+      "rule_name": "检索未召回",
+      "severity": "high",
+      "note": "FTS 与混合均未召回：倾向知识缺口或索引缺失",
+      "evidence": {
+        "kind": "paraphrase",
+        "hybrid_top3": [
+          "kb-agent-agent-001",
+          "kb-agent-gen-004",
+          "kb-bigdata-gen-001"
+        ],
+        "expected_card_id": "kb-backend-redis-001",
+        "cross_layer": [
+          "FTS 与混合均未召回：倾向知识缺口或索引缺失"
+        ]
+      },
+      "suggestion": "补卡片或补索引：跨检索层都未命中 → 知识缺口（ingest）；仅单层未命中 → 分词/向量召回问题"
+    },
+    {
+      "source": "retrieval",
+      "case": "同一个用户的数据全挤到一台机器上怎么办",
+      "rule": "retrieval_miss",
+      "rule_name": "检索未召回",
+      "severity": "high",
+      "note": "FTS 与混合均未召回：倾向知识缺口或索引缺失",
+      "evidence": {
+        "kind": "paraphrase",
+        "hybrid_top3": [
+          "kb-bigdata-gen-002",
+          "kb-backend-gen-001",
+          "kb-agent-agent-006"
+        ],
+        "expected_card_id": "kb-bigdata-flink-002",
+        "cross_layer": [
+          "FTS 与混合均未召回：倾向知识缺口或索引缺失"
+        ]
+      },
+      "suggestion": "补卡片或补索引：跨检索层都未命中 → 知识缺口（ingest）；仅单层未命中 → 分词/向量召回问题"
+    },
+    {
+      "source": "retrieval",
+      "case": "按时间把数据流切开，有几种切法",
+      "rule": "retrieval_miss",
+      "rule_name": "检索未召回",
+      "severity": "high",
+      "note": "FTS 与混合均未召回：倾向知识缺口或索引缺失",
+      "evidence": {
+        "kind": "paraphrase",
+        "hybrid_top3": [
+          "kb-agent-agent-006",
+          "kb-agent-gen-004",
+          "kb-backend-gen-001"
+        ],
+        "expected_card_id": "kb-bigdata-flink-001",
+        "cross_layer": [
+          "FTS 与混合均未召回：倾向知识缺口或索引缺失"
+        ]
+      },
+      "suggestion": "补卡片或补索引：跨检索层都未命中 → 知识缺口（ingest）；仅单层未命中 → 分词/向量召回问题"
+    },
+    {
+      "source": "retrieval",
+      "case": "数据分布不均导致少数机器特别忙",
+      "rule": "retrieval_miss",
+      "rule_name": "检索未召回",
+      "severity": "high",
+      "note": "fts 可召回而混合失败：向量召回/融合排序问题",
+      "evidence": {
+        "kind": "distractor",
+        "hybrid_top3": [
+          "kb-bigdata-flink-003",
+          "kb-backend-gen-001",
+          "kb-bigdata-gen-002"
+        ],
+        "expected_card_id": "kb-bigdata-flink-002",
+        "cross_layer": [
+          "fts 可召回而混合失败：向量召回/融合排序问题"
+        ]
+      },
+      "suggestion": "补卡片或补索引：跨检索层都未命中 → 知识缺口（ingest）；仅单层未命中 → 分词/向量召回问题"
+    },
+    {
+      "source": "retrieval",
+      "case": "Redis 断电后数据怎么恢复",
+      "rule": "retrieval_miss",
+      "rule_name": "检索未召回",
+      "severity": "high",
+      "note": "FTS 与混合均未召回：倾向知识缺口或索引缺失",
+      "evidence": {
+        "kind": "distractor",
+        "hybrid_top3": [
+          "kb-bigdata-flink-003",
+          "kb-agent-agent-006",
+          "kb-bigdata-gen-002"
+        ],
+        "expected_card_id": "kb-backend-redis-001",
+        "cross_layer": [
+          "FTS 与混合均未召回：倾向知识缺口或索引缺失"
+        ]
+      },
+      "suggestion": "补卡片或补索引：跨检索层都未命中 → 知识缺口（ingest）；仅单层未命中 → 分词/向量召回问题"
+    },
+    {
+      "source": "search_tool",
+      "case": "进程挂了内存里的东西还能找回来吗",
+      "rule": "retrieval_miss",
+      "rule_name": "检索未召回",
+      "severity": "high",
+      "note": "工具层(top3)未见期望卡",
+      "evidence": {
+        "kind": "paraphrase",
+        "top3": [
+          "kb-agent-agent-001",
+          "kb-agent-gen-004",
+          "kb-bigdata-gen-001"
+        ],
+        "expected_card_id": "kb-backend-redis-001",
+        "confidence": "low",
+        "sim": 0.586
+      },
+      "suggestion": "补卡片或补索引：跨检索层都未命中 → 知识缺口（ingest）；仅单层未命中 → 分词/向量召回问题"
+    },
+    {
+      "source": "search_tool",
+      "case": "消费者重启之后怎么找回上次读到哪了",
+      "rule": "low_confidence",
+      "rule_name": "召回低置信",
+      "severity": "medium",
+      "note": "召回了但没进 top1：排序问题",
+      "evidence": {
+        "top3": [
+          "kb-bigdata-gen-001",
+          "kb-agent-agent-006",
+          "kb-bigdata-kafka-002"
+        ],
+        "confidence": "low",
+        "sim": 0.513
+      },
+      "suggestion": "排序与标定：调 rerank/相似度标定，或加 query 改写让正确卡进 top1"
+    },
+    {
+      "source": "search_tool",
+      "case": "同一个用户的数据全挤到一台机器上怎么办",
+      "rule": "retrieval_miss",
+      "rule_name": "检索未召回",
+      "severity": "high",
+      "note": "工具层(top3)未见期望卡",
+      "evidence": {
+        "kind": "paraphrase",
+        "top3": [
+          "kb-bigdata-gen-002",
+          "kb-backend-gen-001",
+          "kb-agent-agent-006"
+        ],
+        "expected_card_id": "kb-bigdata-flink-002",
+        "confidence": "low",
+        "sim": 0.524
+      },
+      "suggestion": "补卡片或补索引：跨检索层都未命中 → 知识缺口（ingest）；仅单层未命中 → 分词/向量召回问题"
+    },
+    {
+      "source": "search_tool",
+      "case": "大促当天看板要秒级刷新，整个链路怎么搭",
+      "rule": "low_confidence",
+      "rule_name": "召回低置信",
+      "severity": "medium",
+      "note": "命中但低置信：Agent 会被迫按知识缺口处理",
+      "evidence": {
+        "top3": [
+          "kb-bigdata-gen-001",
+          "kb-agent-agent-001",
+          "kb-backend-gen-002"
+        ],
+        "confidence": "low",
+        "sim": 0.592
+      },
+      "suggestion": "排序与标定：调 rerank/相似度标定，或加 query 改写让正确卡进 top1"
+    },
+    {
+      "source": "search_tool",
+      "case": "按时间把数据流切开，有几种切法",
+      "rule": "retrieval_miss",
+      "rule_name": "检索未召回",
+      "severity": "high",
+      "note": "工具层(top3)未见期望卡",
+      "evidence": {
+        "kind": "paraphrase",
+        "top3": [
+          "kb-agent-agent-006",
+          "kb-agent-gen-004",
+          "kb-backend-gen-001"
+        ],
+        "expected_card_id": "kb-bigdata-flink-001",
+        "confidence": "low",
+        "sim": 0.549
+      },
+      "suggestion": "补卡片或补索引：跨检索层都未命中 → 知识缺口（ingest）；仅单层未命中 → 分词/向量召回问题"
+    },
+    {
+      "source": "search_tool",
+      "case": "数据分布不均导致少数机器特别忙",
+      "rule": "retrieval_miss",
+      "rule_name": "检索未召回",
+      "severity": "high",
+      "note": "工具层(top3)未见期望卡",
+      "evidence": {
+        "kind": "distractor",
+        "top3": [
+          "kb-bigdata-flink-003",
+          "kb-backend-gen-001",
+          "kb-bigdata-gen-002"
+        ],
+        "expected_card_id": "kb-bigdata-flink-002",
+        "confidence": "low",
+        "sim": 0.526
+      },
+      "suggestion": "补卡片或补索引：跨检索层都未命中 → 知识缺口（ingest）；仅单层未命中 → 分词/向量召回问题"
+    },
+    {
+      "source": "search_tool",
+      "case": "Redis 断电后数据怎么恢复",
+      "rule": "retrieval_miss",
+      "rule_name": "检索未召回",
+      "severity": "high",
+      "note": "工具层(top3)未见期望卡",
+      "evidence": {
+        "kind": "distractor",
+        "top3": [
+          "kb-bigdata-flink-003",
+          "kb-agent-agent-006",
+          "kb-bigdata-gen-002"
+        ],
+        "expected_card_id": "kb-backend-redis-001",
+        "confidence": "low",
+        "sim": 0.546
+      },
+      "suggestion": "补卡片或补索引：跨检索层都未命中 → 知识缺口（ingest）；仅单层未命中 → 分词/向量召回问题"
+    }
+  ],
+  "clusters": {
+    "by_rule": {
+      "retrieval_miss": {
+        "count": 10,
+        "severity": "high",
+        "sources": {
+          "retrieval": 5,
+          "search_tool": 5
+        },
+        "cases": [
+          "进程挂了内存里的东西还能找回来吗",
+          "同一个用户的数据全挤到一台机器上怎么办",
+          "按时间把数据流切开，有几种切法",
+          "数据分布不均导致少数机器特别忙",
+          "Redis 断电后数据怎么恢复",
+          "进程挂了内存里的东西还能找回来吗",
+          "同一个用户的数据全挤到一台机器上怎么办",
+          "按时间把数据流切开，有几种切法",
+          "数据分布不均导致少数机器特别忙",
+          "Redis 断电后数据怎么恢复"
+        ],
+        "share": 0.833
+      },
+      "low_confidence": {
+        "count": 2,
+        "severity": "medium",
+        "sources": {
+          "search_tool": 2
+        },
+        "cases": [
+          "消费者重启之后怎么找回上次读到哪了",
+          "大促当天看板要秒级刷新，整个链路怎么搭"
+        ],
+        "share": 0.167
+      }
+    },
+    "patterns": []
+  },
+  "top_issues": [
+    {
+      "rule": "retrieval_miss",
+      "name": "检索未召回",
+      "count": 10,
+      "severity": "high",
+      "sources": {
+        "retrieval": 5,
+        "search_tool": 5
+      },
+      "suggestion": "补卡片或补索引：跨检索层都未命中 → 知识缺口（ingest）；仅单层未命中 → 分词/向量召回问题"
+    },
+    {
+      "rule": "low_confidence",
+      "name": "召回低置信",
+      "count": 2,
+      "severity": "medium",
+      "sources": {
+        "search_tool": 2
+      },
+      "suggestion": "排序与标定：调 rerank/相似度标定，或加 query 改写让正确卡进 top1"
+    }
+  ],
+  "optimizer_input": {
+    "ingest_targets": [
+      "进程挂了内存里的东西还能找回来吗",
+      "同一个用户的数据全挤到一台机器上怎么办",
+      "按时间把数据流切开，有几种切法",
+      "数据分布不均导致少数机器特别忙",
+      "Redis 断电后数据怎么恢复"
+    ],
+    "prompt_fixes": [],
+    "calibration_watch": []
+  },
+  "digest_md": "# 归因报告 · 2026-11-11T11:32:10\n> 来源：in-memory｜失败 12 条 / 扫描案例 57（失败率 0.211）\n\n## 修复优先级\n\n1. **[high] 检索未召回（retrieval_miss）× 10**  来源 {'retrieval': 5, 'search_tool': 5}  → 补卡片或补索引：跨检索层都未命中 → 知识缺口（ingest）；仅单层未命中 → 分词/向量召回问题\n2. **[medium] 召回低置信（low_confidence）× 2**  来源 {'search_tool': 2}  → 排序与标定：调 rerank/相似度标定，或加 query 改写让正确卡进 top1\n\n## 明细（每类最多 5 条）\n\n### 检索未召回（retrieval_miss）× 10\n- 进程挂了内存里的东西还能找回来吗\n- 同一个用户的数据全挤到一台机器上怎么办\n- 按时间把数据流切开，有几种切法\n- 数据分布不均导致少数机器特别忙\n- Redis 断电后数据怎么恢复\n\n### 召回低置信（low_confidence）× 2\n- 消费者重启之后怎么找回上次读到哪了\n- 大促当天看板要秒级刷新，整个链路怎么搭\n"
+}
