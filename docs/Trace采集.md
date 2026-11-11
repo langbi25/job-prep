@@ -29,7 +29,35 @@
 TRACING_ENDPOINT=            # 空则完全关闭（评测/测试零开销）；不以 traces 结尾会自动补 /v1/traces
 TRACING_HEADERS=             # "k=v;k2=v2"，Langfuse 需要 Authorization 头时用
 TRACING_SERVICE=job-prep
+TRACING_FLUSH_MS=5000        # 批处理窗口：默认 5s；演示/调试设 500 换亚秒级可见
 ```
+
+### 2.1 实时性实测（2026-11-11）
+
+观测链路是**准实时**的：span 不是逐条发送，而是按批处理窗口打包导出。实测数据：
+
+| 配置 | 单个 span 结束→可见 | 形态 |
+|---|---|---|
+| 默认 `TRACING_FLUSH_MS=5000` | 3.7 ~ 5.2s | 一批 span 同时出现 |
+| `TRACING_FLUSH_MS=500` | 0.3 ~ 0.6s | 逐 span 到达，根 span 未结束就能看到已完成的子 span |
+
+关键结论：**请求还在跑的时候，Phoenix 里已经有部分 span 了**。实测一次 console 对话
+（4.1s）——HTTP 响应返回后 0.02s 用 trace_id 就能查到 4 个子 span，根 span
+`agent.console` 要等它自己结束后的下一批才到。也就是说「实时」的边界不是请求结束，
+而是「span 结束 + 批处理窗口」。
+
+想看秒级瀑布就把窗口调小（`TRACING_FLUSH_MS=500`）；生产保持默认，别为观测
+付不必要的网络开销。
+
+### 2.2 代理坑（会伪装成「span 丢一半」）
+
+OTel 的 HTTP 导出器默认 `trust_env=True`，会读系统 `HTTP_PROXY`。本机代理环境下，
+发往 `127.0.0.1:6006` 的 OTLP 请求可能被代理劫持，表现为**第一批 span 成功、
+后续批次 404，trace 里只剩一半节点**。曾在同一条件下复现两次 100% 触发。
+
+修法：导出器用 `requests.Session()` 并 `trust_env = False`（已写进 `tracing.py`）。
+判据：如果 Phoenix 里 trace 缺根或缺子节点、日志里有 `Failed to export spans batch code: 404`，
+先怀疑代理，而不是后端。
 
 ## 3. 后端一：Phoenix（本机无 Docker 的推荐路径）
 

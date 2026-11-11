@@ -21,6 +21,7 @@ import os
 import uuid
 from contextlib import contextmanager
 
+import requests
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
@@ -93,8 +94,18 @@ def configure(endpoint: str | None = None, exporter=None, service_name: str | No
         # 测试注入点：InMemorySpanExporter 直接断言 span 树，不用起后端
         provider.add_span_processor(SimpleSpanProcessor(exporter))
     else:
+        # 批处理窗口：默认 5s（官方默认），用于压掉高频 span 的网络开销。
+        # 调试/演示时用 TRACING_FLUSH_MS=500 换秒级可见性——观测延迟本质是
+        # 「批处理窗口 + 导出耗时」，不是采集不到。
+        delay_ms = int(os.getenv("TRACING_FLUSH_MS", "5000") or 5000)
+        # 关键：绕开系统代理。requests 默认 trust_env=True，localhost 的 OTLP 请求
+        # 会被 HTTP_PROXY 劫持，表现成「偶发 404 / span 丢一半」——和 phoenix_sync
+        # 里同样的坑。观测链路自己必须是最稳的那一段。
+        session = requests.Session()
+        session.trust_env = False
         provider.add_span_processor(BatchSpanProcessor(
-            OTLPSpanExporter(endpoint=endpoint, headers=headers)))
+            OTLPSpanExporter(endpoint=endpoint, headers=headers, session=session),
+            schedule_delay_millis=delay_ms))
     # 注意：trace.set_tracer_provider 全局只能生效一次（第二次会被 API 忽略），
     # 所以 _tracer 必须直接从自己的 provider 取，否则重复 configure 后 span 会打到旧后端。
     try:
