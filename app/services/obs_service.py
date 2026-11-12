@@ -10,10 +10,13 @@
 """
 import json
 import os
-import re
-from datetime import datetime
 
 import requests
+
+from .obs_common import SPAN_KIND_ZH, zh_name
+from .obs_common import extract_attrs as _extract_attrs
+from .obs_common import trunc as _trunc
+from .obs_common import ts_ms as _ts_ms
 
 PHOENIX_URL = os.environ.get("PHOENIX_URL", "http://127.0.0.1:6006")
 PROJECT_NAME = os.environ.get("PHOENIX_PROJECT", "default")
@@ -21,33 +24,6 @@ PROJECT_NAME = os.environ.get("PHOENIX_PROJECT", "default")
 _session = requests.Session()
 _session.trust_env = False  # 不读系统代理，本地直连
 
-# ── 中英翻译 ────────────────────────────────────────────────────────────────
-SPAN_KIND_ZH = {
-    "AGENT": "智能体", "LLM": "模型调用", "TOOL": "工具调用",
-    "RETRIEVER": "知识检索", "CHAIN": "链路编排", "EMBEDDING": "向量化",
-    "GUARDRAIL": "护栏", "RERANKER": "重排序", "unknown": "服务",
-}
-
-_NAME_RULES = [
-    (re.compile(r"^agent\.console$"), "Agent 对话"),
-    (re.compile(r"^agent\.(?P<t>.+)$"), "子Agent·{t}"),
-    (re.compile(r"^llm\.chat$"), "LLM 生成回答"),
-    (re.compile(r"^retriever\."), "知识检索"),
-    (re.compile(r"^chain\.assemble$"), "回答组装"),
-    (re.compile(r"^tool\.(?P<t>.+)$"), "工具·{t}"),
-    (re.compile(r"^fastapi\.endpoint$"), "请求处理"),
-    (re.compile(r"^fastapi\.serialization$"), "响应序列化"),
-    (re.compile(r"^fastapi\.dependencies$"), "依赖注入"),
-]
-
-
-def zh_name(name: str) -> str:
-    """内部 span 名 → 中文名；HTTP 路由等本就可读的名字原样返回。"""
-    for pat, tpl in _NAME_RULES:
-        m = pat.match(name)
-        if m:
-            return tpl.format(**m.groupdict()) if "{" in tpl else tpl
-    return name
 
 
 # ── GraphQL 基础 ────────────────────────────────────────────────────────────
@@ -79,74 +55,6 @@ def _pick_project(edges: list) -> dict:
     raise PhoenixUnavailable("Phoenix 中没有可用项目")
 
 
-# ── 属性提取（只挑面板要用的，prompt 全文不进面板）─────────────────────────
-def _trunc(v, n: int = 200) -> str:
-    s = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
-    return s[:n] + ("…" if len(s) > n else "")
-
-
-def _extract_attrs(attrs) -> dict:
-    """提取面板要展示的关键属性。
-
-    兼容两种格式：
-    - 嵌套式（本项目 tracing 实际格式）：llm.model_name / tool.name / input.value / output.value
-    - 扁平式（openinference 标准）：llm.model_name / tool.name / llm.input_messages / input.value
-    """
-    out = {}
-    if not attrs:
-        return out
-    if isinstance(attrs, str):  # 部分 Phoenix 版本把 attributes 返回成 JSON 字符串
-        try:
-            attrs = json.loads(attrs)
-        except (ValueError, TypeError):
-            return out
-    if not isinstance(attrs, dict):
-        return out
-
-    llm = attrs.get("llm")
-    if isinstance(llm, dict):
-        for k, key in (("model_name", "model"), ("scene", "scene"), ("temperature", "temperature")):
-            if llm.get(k) is not None:
-                out[key] = llm[k]
-    tool = attrs.get("tool")
-    if isinstance(tool, dict) and tool.get("name"):
-        out["tool_name"] = tool["name"]
-    ret = attrs.get("retriever")
-    if isinstance(ret, dict):
-        out["retriever"] = (f"top_k={ret.get('top_k')} 命中 {ret.get('n_hits')} 条"
-                            + (f" · 范围 {ret['scope']}" if ret.get("scope") else ""))
-    chain = attrs.get("chain")
-    if isinstance(chain, dict) and chain.get("total_tokens"):
-        out["chain_tokens"] = f"组装上下文 {chain['total_tokens']} tokens"
-
-    for src in ("input", "output"):
-        v = attrs.get(src)
-        if isinstance(v, dict) and v.get("value"):
-            out[src] = _trunc(str(v["value"]), 160)
-        elif isinstance(v, str):
-            out[src] = _trunc(v, 160)
-
-    # 扁平格式兜底
-    if not out.get("model") and attrs.get("llm.model_name"):
-        out["model"] = attrs["llm.model_name"]
-    if not out.get("tool_name") and attrs.get("tool.name"):
-        out["tool_name"] = attrs["tool.name"]
-    if not out.get("input") and attrs.get("input.value"):
-        out["input"] = _trunc(attrs["input.value"])
-    if not out.get("output") and attrs.get("output.value"):
-        out["output"] = _trunc(attrs["output.value"])
-    for k, key in (("llm.input_messages", "llm_in"), ("llm.output_messages", "llm_out")):
-        msgs = attrs.get(k)
-        if isinstance(msgs, list) and msgs:
-            last = msgs[-1] if isinstance(msgs[-1], dict) else {}
-            content = (last.get("message") or {}).get("content")
-            if content:
-                out[key] = _trunc(content, 160)
-    return out
-
-
-def _ts_ms(iso: str) -> float:
-    return datetime.fromisoformat(iso).timestamp() * 1000
 
 
 # ── 对外三接口 ──────────────────────────────────────────────────────────────
