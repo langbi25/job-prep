@@ -11,7 +11,10 @@ from app.observability import tracing as tr
 
 
 @pytest.fixture(autouse=True)
-def _release_db_conns():
+def _release_db_conns(monkeypatch):
+    # 评测进料默认在测试里关闭：失败轮会写 data/eval_intake.jsonl（真实数据目录），
+    # 测试不该往里面倒垃圾。被测模块在自己的用例里显式打开。
+    monkeypatch.setenv("EVAL_INTAKE", "0")
     yield
     db.close_thread_conns()
     # span 用独立连接写库（避开业务事务），不在 db 的池里，得单独关。

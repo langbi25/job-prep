@@ -250,6 +250,15 @@ def record(*, session_id: str, turn: int, mode: str = "auto", skill: str | None 
             ":error,:feedback,:feedback_note,:followup_secs,:flags_json,:failure_rule)", row)
         _stamp_followup(conn, session_id, int(turn), ts)
         conn.commit()
+        # 失败轮自动进评测素材池：报错的那一轮往往正是"标注最有价值"的输入。
+        # 只在整轮 status!=ok 时进，llm_unstable（重试后成功）不进——它是链路抖动不是坏答案。
+        if status != "ok":
+            try:
+                from . import eval_intake  # noqa: PLC0415
+                eval_intake.record_turn_failure(session_id, int(turn), "run_failed",
+                                                meta={"error": (error or "")[:300]})
+            except Exception:  # noqa: BLE001
+                pass
         return tid
     except Exception:  # noqa: BLE001
         return None
@@ -351,6 +360,15 @@ def set_feedback(turn_id: str, score: int, note: str | None = None) -> dict | No
         conn.execute("UPDATE turn_facts SET flags_json=?, failure_rule=? WHERE id=?",
                      (json.dumps(flags, ensure_ascii=False), primary_rule(flags), turn_id))
         conn.commit()
+        # 点踩是最强证据 → 顺手进评测素材池。进料失败不影响反馈本身（record_case 自吞异常）。
+        if int(score) < 0:
+            try:
+                from . import eval_intake  # noqa: PLC0415
+                eval_intake.record_turn_failure(
+                    row["session_id"], int(row["turn"] or 0), "user_reject",
+                    meta={"note": note or "", "turn_id": turn_id})
+            except Exception:  # noqa: BLE001
+                pass
         return dict(conn.execute("SELECT * FROM turn_facts WHERE id=?", (turn_id,)).fetchone())
     finally:
         conn.close()
