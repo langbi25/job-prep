@@ -18,6 +18,7 @@
         <el-card shadow="hover" class="stat">
           <div class="stat-value" :style="{ color: m.color }">{{ m.value }}</div>
           <div class="stat-label">{{ m.label }}</div>
+          <div v-if="m.sub" class="stat-sub">{{ m.sub }}</div>
         </el-card>
       </el-col>
     </el-row>
@@ -134,18 +135,26 @@ const weakCards = ref([])
 const stats = ref({ pass: 0, fail: 0, done: false })
 
 const cur = computed(() => queue.value[pos.value] || {})
-const metrics = computed(() => [
-  { label: '今日到期', value: daily.value.due_cards ?? 0, color: '#409eff' },
-  { label: '未解决错题', value: daily.value.open_mistakes ?? 0, color: '#f56c6c' },
-  { label: '待处理采集', value: daily.value.pending_ingests ?? 0, color: '#e6a23c' },
-  {
-    label: '近期模拟均分',
-    value: (daily.value.recent_mock_avgs || []).length
-      ? (daily.value.recent_mock_avgs.reduce((a, b) => a + (b || 0), 0) / daily.value.recent_mock_avgs.length).toFixed(1)
-      : '—',
-    color: '#67c23a',
-  },
-])
+const metrics = computed(() => {
+  const newN = daily.value.due_new ?? 0
+  const overdue = daily.value.due_overdue ?? 0
+  const oldest = daily.value.oldest_overdue_days ?? 0
+  let sub = ''
+  if (overdue > 0) sub = `新学 ${newN} · 逾期 ${overdue}（最久 ${oldest} 天）`
+  else if (newN > 0) sub = '全是新卡，还没开始学'
+  return [
+    { label: '今日待办卡', value: daily.value.due_cards ?? 0, sub, color: '#409eff' },
+    { label: '未解决错题', value: daily.value.open_mistakes ?? 0, color: '#f56c6c' },
+    { label: '待处理采集', value: daily.value.pending_ingests ?? 0, color: '#e6a23c' },
+    {
+      label: '近期模拟均分',
+      value: (daily.value.recent_mock_avgs || []).length
+        ? (daily.value.recent_mock_avgs.reduce((a, b) => a + (b || 0), 0) / daily.value.recent_mock_avgs.length).toFixed(1)
+        : '—',
+      color: '#67c23a',
+    },
+  ]
+})
 
 async function load() {
   daily.value = await api.get('/api/daily')
@@ -205,6 +214,7 @@ onMounted(load)
 .stat { text-align: center; }
 .stat-value { font-size: 26px; font-weight: 700; }
 .stat-label { color: #606266; font-size: 12px; margin-top: 4px; }
+.stat-sub { color: #909399; font-size: 11px; margin-top: 2px; line-height: 1.4; }
 .card-head { display: flex; justify-content: space-between; align-items: center; }
 .hint { color: #909399; font-size: 12px; }
 .q-top { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }

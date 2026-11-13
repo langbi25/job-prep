@@ -23,6 +23,10 @@ const routes = [
       { path: 'plans', name: 'Plans', component: () => import('../views/Plans.vue'), meta: { title: '改造方案' } },
       { path: 'retrospectives', name: 'Retrospectives', component: () => import('../views/Retrospectives.vue'), meta: { title: '复盘中心' } },
       { path: 'observability', name: 'Observability', component: () => import('../views/Observability.vue'), meta: { title: '可观测中心' } },
+      { path: 'traces', name: 'Traces', component: () => import('../views/Traces.vue'), meta: { title: '调用树' } },
+      { path: 'quality', name: 'Quality', component: () => import('../views/Quality.vue'), meta: { title: '回合质量' } },
+      { path: 'agent-lab', name: 'AgentLab', component: () => import('../views/AgentLab.vue'), meta: { title: 'Agent 能力' } },
+      { path: 'harness', name: 'Harness', component: () => import('../views/Harness.vue'), meta: { title: 'Harness 管理' } },
     ],
   },
 ]

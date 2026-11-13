@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:tree": "node scripts/test-tree-search.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",

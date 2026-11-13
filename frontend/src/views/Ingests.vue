@@ -5,6 +5,24 @@
       <el-button :icon="Refresh" circle @click="load" />
     </div>
 
+    <!-- 起草进度：确认入库后卡片由后台逐张生成，原来只提示"约 1 分钟后去看"，
+         中途是成功、失败还是建了几张全靠猜。这里实时显示到第几张。 -->
+    <el-card v-if="draftProg.active || draftProg.summary" shadow="never" class="draft-bar">
+      <div class="draft-row">
+        <span class="draft-title">
+          <template v-if="draftProg.active">
+            AI 正在起草卡片 {{ draftProg.i }}/{{ draftProg.n }}
+            <span v-if="draftProg.question" class="draft-q">{{ draftProg.question }}</span>
+          </template>
+          <template v-else>{{ draftProg.summary }}</template>
+        </span>
+        <el-link v-if="!draftProg.active && draftProg.done" type="primary" :underline="false"
+                 @click="goApprovals">去审批中心</el-link>
+      </div>
+      <el-progress v-if="draftProg.active" :percentage="draftPercent" :stroke-width="6"
+                   :show-text="false" style="margin-top: 8px" />
+    </el-card>
+
     <el-card shadow="never" style="margin-bottom: 16px">
       <template #header>投喂新面经（粘贴文本）</template>
       <el-input v-model="text" type="textarea" :rows="6" placeholder="粘贴面经原文（公司/轮次/题目列表），越完整提取质量越高" />
@@ -271,10 +289,14 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
+
+const router = useRouter()
+const goApprovals = () => router.push('/approvals')
 
 const rows = ref([])
 const text = ref('')
@@ -292,6 +314,14 @@ const meta = ref({ company: '', position: '', direction: '', round: '', intervie
 const detailOpen = ref(false)
 const detailLoading = ref(false)
 const detail = ref(null)
+
+// 起草进度：active 时显示第几张；结束后 summary 留一条结果，不立刻消失——
+// 「建了 3 张、失败 1 张」这种结论比一闪而过的 toast 有用。
+const draftProg = reactive({ active: false, i: 0, n: 0, question: '', done: 0, failed: 0,
+                             summary: '' })
+const draftPercent = computed(() => (
+  draftProg.n ? Math.round(((draftProg.i - (draftProg.active ? 1 : 0)) / draftProg.n) * 100) : 0
+))
 
 const actionStatusText = (s) => (
   { pending: '待审批', approved: '已批准', rejected: '已驳回', failed: '失败' }[s] || s
@@ -407,27 +437,111 @@ async function reExtract() {
 
 async function doConfirm() {
   confirming.value = true
-  try {
-    const res = await api.post(`/api/ingests/${current.value.id}/confirm`, {
-      ...meta.value,
-      questions: qlist.value.filter((q) => q.keep).map((q) => ({
-        text: q.text, qtype: q.qtype, topic: q.topic, keep: true, build_card: q.build_card,
-      })),
-    })
-    let msg = `已入库：面经 ${res.interview_id}，题目 ${res.questions_kept} 道`
-    if (res.answers_saved) msg += `，写入参考答案 ${res.answers_saved} 道`
-    ElMessage.success(msg)
-    if (res.draft_queued) {
-      ElMessage.info({
-        message: `正在后台起草 ${res.draft_queued} 张卡片，约 1 分钟后到「审批中心」查看`
-          + (res.draft_skipped ? `；另有 ${res.draft_skipped} 道未起草，可在题目池批量建卡` : ''),
-        duration: 6000,
-      })
+  draftProg.active = false
+  draftProg.summary = ''
+
+  // 断线续传：起草跑在后台线程，前端断开不会让它停，重连按 seq 补齐即可
+  let streamId = ''
+  let lastSeq = 0
+  let finished = false
+
+  const onEvent = (ev) => {
+    if (ev.type === 'confirmed') {
+      let msg = `已入库：面经 ${ev.result.interview_id}，题目 ${ev.result.questions_kept} 道`
+      if (ev.result.answers_saved) msg += `，写入参考答案 ${ev.result.answers_saved} 道`
+      ElMessage.success(msg)
+      if (ev.draft_queued) {
+        Object.assign(draftProg, { active: true, i: 0, n: ev.draft_queued,
+                                   question: '', done: 0, failed: 0 })
+      }
+      dialog.value = false
+      tab.value = 'confirmed'
+      load()
+    } else if (ev.type === 'draft_start') {
+      draftProg.i = ev.i
+      draftProg.n = ev.n
+      draftProg.question = ev.question || ''
+    } else if (ev.type === 'draft_end') {
+      if (ev.ok) draftProg.done += 1
+      else draftProg.failed += 1
+    } else if (ev.type === 'done') {
+      draftProg.active = false
+      draftProg.question = ''
+      const parts = []
+      if (ev.inserted) parts.push(`起草 ${ev.inserted} 张草稿待审批`)
+      if (ev.failed) parts.push(`失败 ${ev.failed} 张`)
+      if (ev.skipped) parts.push(ev.skipped)
+      draftProg.summary = parts.join('；') || '这批没有待起草的卡片'
+      if (ev.inserted) load()
+    } else if (ev.type === 'error') {
+      draftProg.active = false
+      draftProg.summary = `起草失败：${ev.message || '未知原因'}`
+      ElMessage.error(draftProg.summary)
     }
-    dialog.value = false
-    tab.value = 'confirmed'
+  }
+
+  const consume = async (url, init) => {
+    // 不走 axios：SSE 要逐块读 ReadableStream，axios 会攒完整响应才给出
+    const resp = await fetch(url, init)
+    if (!resp.ok) {
+      let detail = `请求失败（${resp.status}）`
+      try { const j = await resp.json(); if (typeof j.detail === 'string') detail = j.detail } catch { /* 保留默认 */ }
+      throw new Error(detail)
+    }
+    streamId = resp.headers.get('X-Stream-Id') || streamId
+    const reader = resp.body.getReader()
+    const dec = new TextDecoder()
+    let buf = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      const parts = buf.split('\n\n')
+      buf = parts.pop()                  // 半个事件留在缓冲里等下一块拼齐
+      for (const p of parts) {
+        // 事件块含 "id: N" 与 "data: {...}"，按行找 data 而不是按块首判断
+        const dataLine = p.split('\n').find((l) => l.startsWith('data:'))
+        if (!dataLine) continue
+        try {
+          const ev = JSON.parse(dataLine.slice(5))
+          if (ev.seq) lastSeq = ev.seq
+          if (ev.type === 'done' || ev.type === 'error') finished = true
+          onEvent(ev)
+        } catch { /* 单个坏事件不中断整个流 */ }
+      }
+    }
+  }
+
+  try {
+    await consume(`/api/ingests/${current.value.id}/confirm/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...meta.value,
+        questions: qlist.value.filter((q) => q.keep).map((q) => ({
+          text: q.text, qtype: q.qtype, topic: q.topic, keep: true, build_card: q.build_card,
+        })),
+      }),
+    })
+  } catch (e) {
+    if (streamId && !finished) {
+      try {
+        await consume(`/api/ingests/draft-stream/${streamId}?after=${lastSeq}`, { method: 'GET' })
+      } catch (e2) {
+        draftProg.active = false
+        draftProg.summary = `进度中断：${e2.message || e2}（卡片可能仍在后台生成，稍后看审批中心）`
+      }
+    } else {
+      draftProg.active = false
+      draftProg.summary = `确认失败：${e.message || e}`
+      ElMessage.error(draftProg.summary)
+    }
+  } finally {
+    confirming.value = false
+    // 流异常结束时不能留一条永远停在 2/3 的假进度
+    if (!finished && draftProg.active) draftProg.active = false
     load()
-  } finally { confirming.value = false }
+  }
 }
 
 async function discard(id) {
@@ -444,6 +558,10 @@ onMounted(load)
 .page { padding: 24px; }
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .page-header h2 { margin: 0; }
+.draft-bar { margin-bottom: 16px; background: #f4f8ff; border-color: #d9e8ff; }
+.draft-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.draft-title { font-size: 13px; color: #303133; min-width: 0; }
+.draft-q { color: #909399; margin-left: 8px; }
 .ans-box { padding: 6px 12px 6px 48px; font-size: 12px; line-height: 1.7; }
 .ans-text { margin: 4px 0 0; white-space: pre-wrap; font-family: inherit; color: #606266; }
 .muted { color: #c0c4cc; }

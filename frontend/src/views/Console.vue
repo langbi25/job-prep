@@ -46,7 +46,13 @@
             <span v-if="m.mode" class="tag">{{ m.mode === 'auto' ? '自动' : '只读' }}</span>
             <span v-if="m.created_at" class="time">{{ (m.created_at || '').slice(11, 16) }}</span>
           </div>
-          <div class="text">{{ m.content }}</div>
+          <div class="text">{{ m.content }}<span v-if="m.streaming" class="cursor"></span></div>
+
+          <div v-if="m.streaming && m.segTitle" class="segline">
+            <span class="pulse"></span>
+            <span class="seg-title">{{ m.segTitle }}</span>
+            <span v-if="m.trace.length" class="hint-inline">· 已调 {{ m.trace.length }} 次工具</span>
+          </div>
 
           <div v-if="m.trace && m.trace.length" class="steps">
             <div class="steps-head" @click="toggleSteps(i)">
@@ -94,10 +100,18 @@
             <el-button v-for="a in arts(m)" :key="a.url" size="small" plain type="primary"
                        @click="go(a.url)">{{ a.label }} →</el-button>
           </div>
+          <div v-if="m.role === 'assistant' && !m.streaming && m.content" class="fbbar">
+            <span class="fbask">这轮回答</span>
+            <button :class="['fb', m.feedback === 1 && 'on-up']" :disabled="m.fbSent"
+                    @click="rate(i, m, 1)">有用</button>
+            <button :class="['fb', m.feedback === -1 && 'on-down']" :disabled="m.fbSent"
+                    @click="rate(i, m, -1)">没用</button>
+            <span v-if="m.fbSent" class="fbnote">已记录，会进失败样本</span>
+          </div>
         </div>
       </div>
 
-      <div v-if="busy" class="row assistant">
+      <div v-if="busy && !streamingActive" class="row assistant">
         <div class="bubble thinking">
           <span class="pulse"></span>
           {{ busyText }}
@@ -142,6 +156,7 @@ const messages = ref([])
 const draft = ref('')
 const busy = ref(false)
 const busyText = ref('Agent 正在处理…')
+const streamingActive = ref(false)   // 流式占位气泡活跃时，底部的"思考中"块要藏起来，避免重复
 const sessionId = ref('')
 const sessions = ref([])
 const sessionsOpen = ref(false)
@@ -166,6 +181,29 @@ const ART_MAP = [
 ]
 
 function okCount(trace) { return trace.filter((s) => s.ok).length }
+
+// 反馈的坐标是「第几轮」而不是消息下标：一条 assistant 消息对应第几个 user 消息，
+// 就是它在 turn_facts 里的 (session_id, turn)。后端只认这个唯一键。
+function turnOf(index) {
+  let n = 0
+  for (let k = 0; k <= index; k++) if (messages.value[k]?.role === 'user') n++
+  return n
+}
+
+async function rate(index, m, score) {
+  if (!sessionId.value) return
+  m.fbSent = true
+  try {
+    await api.post('/api/turns/feedback', {
+      session_id: sessionId.value, turn: turnOf(index), score,
+    })
+    m.feedback = score
+  } catch (e) {
+    // 升级前的对话没有回合记录。这不是错误，是没有可评价的样本，不该弹红条吓人。
+    m.fbSent = false
+    ElMessage.info('这一轮没有质量记录（升级前的对话），无法标记')
+  }
+}
 function failCount(trace) { return trace.filter((s) => !s.ok).length }
 
 function argsText(args) {
@@ -212,6 +250,35 @@ async function scrollBottom() {
   if (el) el.scrollTop = el.scrollHeight
 }
 
+// SSE 事件 → 占位消息的增量更新。
+// 关键规则：带 tool_calls 的轮次也会先吐 delta（模型"我先查一下…"的思考文字），
+// turn_end(has_tools=true) 到达时必须清掉已累计的内容——最终回复一定是无工具那一轮。
+function handleStreamEvent(m, ev) {
+  if (ev.type === 'segment') {
+    m.segTitle = ev.total > 1 ? `第 ${ev.index}/${ev.total} 段 · ${ev.title}` : (ev.title || '')
+    m.content = ''                       // 新段开始，上一段的回复已被交接，不再展示
+  } else if (ev.type === 'delta') {
+    m.content += ev.text
+  } else if (ev.type === 'turn_end') {
+    if (ev.has_tools) m.content = ''
+  } else if (ev.type === 'tool') {
+    m.trace.push({ tool: ev.tool, ok: ev.ok, args: {}, preview: '', error: ev.error })
+  } else if (ev.type === 'done') {
+    const r = ev.result || {}
+    sessionId.value = r.session_id || sessionId.value
+    m.content = r.reply
+    m.trace = r.trace || []
+    m.ctx = r.ctx || {}
+    m.mode = r.mode
+    m.created_at = new Date().toISOString()
+    m.streaming = false
+  } else if (ev.type === 'error') {
+    m.streaming = false
+    m.error = true
+    m.content = ev.message || '这一轮没跑通'
+  }
+}
+
 async function send() {
   const text = draft.value.trim()
   if (!text || busy.value) return
@@ -221,25 +288,76 @@ async function send() {
   draft.value = ''
   await scrollBottom()
 
+  const m = reactive({ role: 'assistant', content: '', streaming: true, trace: [], segTitle: '' })
+  messages.value.push(m)
   busy.value = true
+  streamingActive.value = true
   busyText.value = text.length > 2000 ? 'Agent 正在抽取并处理这份材料…' : 'Agent 正在处理…'
+
+  // 断线续传状态：streamId 来自响应头，lastSeq 是已处理的最大事件序号。
+  // 断线后用 GET /chat/stream/{id}?after=lastSeq 补齐——重发整条消息等于让 agent
+  // 再想一遍，白花十几秒和几分钱，而且历史里会多出重复的一轮。
+  let streamId = ''
+  let lastSeq = 0
+  let finished = false
+
+  const consume = async (url, init) => {
+    // 不走 axios：SSE 要用 ReadableStream 逐块读，axios 默认攒完整响应
+    const resp = await fetch(url, init)
+    if (!resp.ok) {
+      let detail = `请求失败（${resp.status}）`
+      try { const j = await resp.json(); if (typeof j.detail === 'string') detail = j.detail } catch { /* 保留默认 */ }
+      throw new Error(detail)
+    }
+    streamId = resp.headers.get('X-Stream-Id') || streamId
+    const reader = resp.body.getReader()
+    const dec = new TextDecoder()
+    let buf = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      const parts = buf.split('\n\n')
+      buf = parts.pop()                  // 半个事件留在缓冲里，等下一个块拼齐
+      for (const p of parts) {
+        // 事件块含 "id: N" 与 "data: {...}" 两行，按行找 data 而不是按块首判断
+        const dataLine = p.split('\n').find((l) => l.startsWith('data:'))
+        if (!dataLine) continue
+        try {
+          const ev = JSON.parse(dataLine.slice(5))
+          if (ev.seq) lastSeq = ev.seq
+          if (ev.type === 'done' || ev.type === 'error') finished = true
+          handleStreamEvent(m, ev)
+        } catch { /* 单个坏事件不中断整个流 */ }
+      }
+      await scrollBottom()
+    }
+  }
+
   try {
-    const res = await api.post('/api/console/chat', {
-      message: text, session_id: sessionId.value || undefined, mode: mode.value,
-    })
-    sessionId.value = res.session_id
-    messages.value.push({
-      role: 'assistant', content: res.reply, trace: res.trace || [],
-      ctx: res.ctx || {}, mode: res.mode, created_at: new Date().toISOString(),
+    await consume('/api/console/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, session_id: sessionId.value || undefined, mode: mode.value }),
     })
   } catch (e) {
-    const detail = e.response?.data?.detail
-    messages.value.push({
-      role: 'assistant', error: true,
-      content: typeof detail === 'string' ? detail : '这一轮没跑通，看后端日志（消息已保留，可直接重发）',
-    })
+    if (streamId && !finished) {
+      try {
+        await consume(`/api/console/chat/stream/${streamId}?after=${lastSeq}`, { method: 'GET' })
+      } catch (e2) {
+        m.streaming = false
+        m.error = true
+        m.content = m.content || `连接断了，续传也失败：${e2.message || e2}`
+      }
+    } else {
+      m.streaming = false
+      m.error = true
+      m.content = m.content || (typeof e.message === 'string' ? e.message : '这一轮没跑通，消息已保留，可直接重发')
+    }
   } finally {
+    m.streaming = false
     busy.value = false
+    streamingActive.value = false
     await scrollBottom()
   }
 }
@@ -335,6 +453,14 @@ onMounted(async () => {
 
 .arts { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
 .ctxline { margin-top: 8px; font-size: 11px; color: #b1b3b8; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.fbbar { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 11px; color: #b1b3b8; }
+.fb { border: 0.5px solid #dcdfe6; background: transparent; border-radius: 4px;
+  padding: 1px 8px; font-size: 11px; color: #909399; cursor: pointer; line-height: 1.6; }
+.fb:hover:not(:disabled) { border-color: #c0c4cc; color: #606266; }
+.fb:disabled { cursor: default; opacity: 0.6; }
+.fb.on-up { border-color: #67c23a; color: #67c23a; }
+.fb.on-down { border-color: #f56c6c; color: #f56c6c; }
+.fbnote { color: #67c23a; }
 .ctxline .deg { color: #e6a23c; }
 .ctxtip { font-size: 12px; line-height: 1.6; }
 
@@ -342,6 +468,17 @@ onMounted(async () => {
 .pulse { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #409eff;
          margin-right: 8px; animation: pulse 1.1s infinite ease-in-out; }
 @keyframes pulse { 0%, 100% { opacity: .25; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
+
+.cursor { display: inline-block; width: 7px; height: 15px; background: #409eff;
+          vertical-align: -2px; margin-left: 2px; animation: blink 1s step-end infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+/* flex 里裸文字节点会被压成一字一行（实测窄窗下"薄弱点诊断"竖排）：
+   文字必须包在可伸缩的 span 里，操作数固定宽、允许换行而不是挤压 */
+.segline { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 6px;
+           margin-top: 8px; color: #606266; font-size: 12px; }
+.segline .pulse { flex: none; margin-right: 0; }
+.segline .seg-title { flex: 1 1 auto; min-width: 0; line-height: 1.6; }
+.segline .hint-inline { flex: none; white-space: nowrap; }
 
 .composer { display: flex; gap: 10px; align-items: flex-end; padding: 12px 20px 16px;
             background: #fff; border-top: 1px solid #ebeef5; }

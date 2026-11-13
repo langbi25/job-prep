@@ -3,7 +3,8 @@
     <el-aside width="200px" class="aside">
       <div class="logo">🎯 Job Prep</div>
       <el-menu :default-active="$route.path" router background-color="#1d2530" text-color="#aeb7c2"
-               active-text-color="#409eff" style="border-right: none">
+               active-text-color="#409eff"
+               style="border-right: none; flex: 1; overflow-y: auto; overflow-x: hidden">
         <el-menu-item index="/console"><el-icon><ChatLineRound /></el-icon>Agent</el-menu-item>
         <el-menu-item index="/dashboard"><el-icon><Odometer /></el-icon>总览</el-menu-item>
         <el-menu-item index="/ingests"><el-icon><Upload /></el-icon>采集中心</el-menu-item>
@@ -19,6 +20,10 @@
         <el-menu-item index="/evolution"><el-icon><TrendCharts /></el-icon>进化报告</el-menu-item>
         <el-menu-item index="/retrospectives"><el-icon><Reading /></el-icon>复盘中心</el-menu-item>
         <el-menu-item index="/observability"><el-icon><Monitor /></el-icon>可观测中心</el-menu-item>
+        <el-menu-item index="/traces"><el-icon><Share /></el-icon>调用树</el-menu-item>
+        <el-menu-item index="/quality"><el-icon><Aim /></el-icon>回合质量</el-menu-item>
+        <el-menu-item index="/agent-lab"><el-icon><Cpu /></el-icon>Agent 能力</el-menu-item>
+        <el-menu-item index="/harness"><el-icon><Grid /></el-icon>Harness 管理</el-menu-item>
       </el-menu>
       <div class="backend-status">
         <el-tag :type="healthy ? 'success' : 'danger'" size="small" effect="dark">
@@ -58,5 +63,12 @@ onUnmounted(() => clearInterval(timer))
 <style scoped>
 .aside { background: #1d2530; display: flex; flex-direction: column; }
 .logo { color: #fff; font-size: 18px; font-weight: 700; padding: 20px 16px; letter-spacing: 1px; }
+/* 菜单已有 15 项，默认 56px 行高在 1080p 下会被裁掉末尾几项；
+   压到 42px 后全部可见，滚动条只在极端窄屏出现 */
+.aside :deep(.el-menu-item) { height: 42px; line-height: 42px; }
+.aside :deep(.el-menu) { scrollbar-width: thin; scrollbar-color: #3a4654 transparent; }
+.aside :deep(.el-menu::-webkit-scrollbar) { width: 6px; }
+.aside :deep(.el-menu::-webkit-scrollbar-thumb) { background: #3a4654; border-radius: 3px; }
+.aside :deep(.el-menu::-webkit-scrollbar-track) { background: transparent; }
 .backend-status { margin-top: auto; padding: 16px; }
 </style>
