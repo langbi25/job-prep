@@ -36,6 +36,25 @@
 
 ### 1.2 streamable HTTP：别的 agent / 远程
 
+**容器方式**（日常用，可选服务，默认不启动）：
+
+```bash
+# 1) 生成 token 写进 .env
+python -c "import secrets;print('MCP_TOKEN='+secrets.token_urlsafe(32))" >> .env
+# 2) 显式启用
+docker compose --profile mcp up -d
+```
+
+端口映射为 `127.0.0.1:8766:8766`——只服务本机客户端，外部网络访问不到。
+要跨机接入就改成 `"8766:8766"`，那时 token 必须是长随机串。
+
+它是**第二个写进程**（与 api 共用 `jobprep_data` 卷）。这一点专门验证过：
+两个进程各写 40 次、共 80 次提交 0 冲突——`sqlite3.connect` 的默认 `timeout=5s`
+就是 busy timeout，WAL 下多写者串行足够用。B 计划是把它降级成只读（把写工具从
+`surfaces` 里摘掉），目前不需要。
+
+**本地直接跑**（开发/调试）：
+
 ```bash
 MCP_TOKEN=your-token python -m app.mcp.server --http --port 8766
 ```
@@ -180,5 +199,6 @@ enter/exit 在同一任务，跨任务退出会抛 `Attempted to exit cancel sco
 - 没有实现 resource 订阅与 progress 通知，长任务（如 `ingest_text`）是同步返回；
 - 选择档依赖 LLM_API_KEY，未配置时自动跳过并标注，不算失败；
 - 24 条用例覆盖 9 个工具，边界问法（同义改写、跨工具组合）还需要扩；
-- MCP 的 HTTP 传输代码支持（`--http` + `MCP_TOKEN`），但 **docker-compose 里没有映射 8766 端口**，
-  容器内只有 stdio 这条路实际可用；远程接入需要先补端口与 token 注入。
+- HTTP 传输只有 Bearer 校验，没有按客户端分权：拿到 token 就能调全部 9 个工具。
+  个人内网够用，真要多人用需要给写工具单独鉴权；
+- `mcp_calls` 没有保留策略（现在 300+ 行，还不到需要清理的规模）。
