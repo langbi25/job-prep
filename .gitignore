@@ -1,7 +1,14 @@
 .env
+deploy/.env.langfuse
 data/kb.sqlite
+data/app.db
+data/job_prep.sqlite3
+data/tool_flags.json
 data/_backup/
 data/_tmp_live/
+backups/
+docker-build.log
+uvicorn-*.log
 __pycache__/
 .venv/
 reports/
