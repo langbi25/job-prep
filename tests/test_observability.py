@@ -118,8 +118,13 @@ def test_trace_detail_tree_and_attrs():
     assert tool["name_zh"] == "工具·search_kb"
 
 
-def test_api_degrades_when_phoenix_down():
-    """Phoenix 挂掉时返回 available=False 而不是 500。"""
+def test_api_degrades_when_phoenix_down(monkeypatch):
+    """Phoenix 挂掉时返回 available=False 而不是 500。
+
+    显式固定 backend：.env 里 OBS_BACKEND 可能已切到 langfuse，
+    这个用例只验证 phoenix 分支的降级语义。
+    """
+    monkeypatch.setenv("OBS_BACKEND", "phoenix")
     def boom(query):
         raise obs_service.PhoenixUnavailable("Phoenix 连接失败：refused")
 

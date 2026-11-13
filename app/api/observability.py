@@ -85,3 +85,28 @@ def trace_detail(trace_id: str):
         return _svc().trace_detail(trace_id)
     except _ERRORS as e:
         return _fallback(e)
+
+
+@router.get("/audit")
+def audit_log(days: int = 7, limit: int = 100):
+    """审计日志：写操作与被拒请求。数据源是本地 audit_log 表，与外部观测后端无关。"""
+    import datetime
+
+    from fastapi import HTTPException
+    from ..core.db import get_conn
+
+    if not (1 <= days <= 90):
+        raise HTTPException(400, "days 限 1~90")
+    if not (1 <= limit <= 500):
+        raise HTTPException(400, "limit 限 1~500")
+    since = (datetime.datetime.now() - datetime.timedelta(days=days)).isoformat()
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT ts, actor, action, path, query, ip, status, duration_ms "
+        "FROM audit_log WHERE ts >= ? ORDER BY id DESC LIMIT ?", (since, limit)).fetchall()
+    total = conn.execute("SELECT count(*) FROM audit_log WHERE ts >= ?", (since,)).fetchone()[0]
+    denied = conn.execute(
+        "SELECT count(*) FROM audit_log WHERE ts >= ? AND status = 401", (since,)).fetchone()[0]
+    return {"available": True, "total": total, "denied_401": denied,
+            "items": [dict(zip(("ts", "actor", "action", "path", "query", "ip", "status", "duration_ms"), r))
+                      for r in rows]}
