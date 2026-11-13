@@ -7,7 +7,9 @@
 import json
 import os
 import re
+import threading
 import time
+from contextlib import contextmanager
 
 import httpx
 
@@ -29,6 +31,75 @@ class LLMError(RuntimeError):
         super().__init__(message)
         self.status = status
         self.retryable = retryable
+
+
+class LLMConcurrencyError(LLMError):
+    """拿不到并发额度（排队超时）。
+
+    retryable=True：排队失败通常是"现在正忙"，稍等重试往往就好——它和 429 的
+    语义一致，调用方的重试逻辑不用为它单独写分支。
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message, retryable=True)
+
+
+# ---- 上游并发池 ----
+# 编排三步并行 + 记忆抽取 + 用户主对话 + 后台起草，全部走 _chat_json 这个咽喉。
+# 没有池的时候，"编排某步循环重试"或"批量建卡跑飞"会把上游并发打满，
+# 表现为所有请求一起变慢、一起超时——故障面是全局的。有池之后，超出的调用
+# 排队等待，等不到的快速失败并明确报"并发已满"，故障被限制在超出者自己身上。
+_pool_lock = threading.Lock()
+_pool: threading.BoundedSemaphore | None = None
+_pool_size = 0
+
+
+def _get_pool() -> tuple[threading.BoundedSemaphore, int]:
+    """按 env 取池。env 变了（测试/热调）就重建——旧池里还挂着的调用方
+    release 到旧池上，不影响新池的正确性，只是少了一个计数。"""
+    global _pool, _pool_size
+    size = max(int(os.getenv("LLM_MAX_CONCURRENCY", "4") or 4), 1)
+    with _pool_lock:
+        if _pool is None or _pool_size != size:
+            _pool = threading.BoundedSemaphore(size)
+            _pool_size = size
+    return _pool, size
+
+
+def _acquire_pool() -> tuple[threading.BoundedSemaphore, float]:
+    """拿一个并发额度，返回 (池, 等待毫秒)。等不到就抛 LLMConcurrencyError。
+
+    为什么用 acquire(timeout=) 而不是无限等：无限等会把"上游已经过载"变成
+    "请求挂着不响应"——用户看到的不是报错而是转圈，比失败更难诊断。
+    排队上限由 LLM_ACQUIRE_TIMEOUT 控制，超时快速失败。
+    """
+    pool, size = _get_pool()
+    timeout = max(float(os.getenv("LLM_ACQUIRE_TIMEOUT", "30") or 30), 0)
+    t0 = time.perf_counter()
+    if not pool.acquire(timeout=timeout):
+        waited = (time.perf_counter() - t0) * 1000
+        err = LLMConcurrencyError(
+            f"LLM 并发池已满（上限 {size}），等待 {timeout:g}s 未拿到额度。"
+            "大概率有编排/批量任务占满上游；稍后重试，或调大 LLM_MAX_CONCURRENCY。")
+        # 排队失败也要落失败账：它没花 token，但"这次调用尝试发生过、没发出去"
+        # 必须可见——否则上游过载时台账一片平静，用户端却全在报错。
+        _usage_failed(err, waited)
+        raise err
+    return pool, (time.perf_counter() - t0) * 1000
+
+
+@contextmanager
+def _pool_slot():
+    """占一个并发额度，离开 with 自动归还——即使里面抛异常。
+
+    归还必须是 finally 语义：失败调用（网络错、解析错）最容易漏 release，
+    漏一次池就永久少一格，几次之后表现成"莫名其妙全部排队超时"。
+    """
+    pool, wait_ms = _acquire_pool()
+    try:
+        yield wait_ms
+    finally:
+        pool.release()
 
 
 def stats() -> dict:
@@ -273,7 +344,9 @@ def _chat_json(system: str | None, user: str | None, tools: list | None = None,
     # 是排查"模型当时看到了什么"的第一现场。属性对齐 GenAI/OpenInference 语义约定。
     from ..observability import tracing as tr
     stream = os.getenv("LLM_STREAM", "1") != "0"
-    with tr.span("llm.chat", tr.KIND_LLM, {
+    # 并发额度在 span 之外拿：排队时间不属于"这次调用"的耗时，混进 duration
+    # 会把上游过载误读成模型变慢；等待时长单独记进 span 属性，过载一眼可见。
+    with _pool_slot() as pool_wait_ms, tr.span("llm.chat", tr.KIND_LLM, {
         tr.ATTR_MODEL: config.LLM_MODEL,
         "llm.scene": tr.current_scene() or "unknown",
         "llm.n_messages": len(messages),
@@ -283,6 +356,8 @@ def _chat_json(system: str | None, user: str | None, tools: list | None = None,
         "llm.temperature": temperature,
         "llm.stream": stream,
     }) as s:
+        if s is not None and pool_wait_ms > 50:
+            s.set_attribute("llm.pool_wait_ms", round(pool_wait_ms, 1))
         usage = None
         fell_back = False
         t_req = time.perf_counter()
