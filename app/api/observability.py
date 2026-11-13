@@ -87,6 +87,37 @@ def trace_detail(trace_id: str):
         return _fallback(e)
 
 
+@router.get("/alerts")
+def alert_history(days: int = 1, limit: int = 50):
+    """告警历史：触发记录 + 当前阈值配置 + 送达失败数。
+
+    送达失败率本身是最重要的一列——webhook 断了以后告警会静默失败，
+    靠这个数字发现"告警系统失联"。
+    """
+    from fastapi import HTTPException
+    from ..observability import alerts
+
+    if not (1 <= days <= 30):
+        raise HTTPException(400, "days 限 1~30")
+    return alerts.history(days=days, limit=limit)
+
+
+@router.post("/alerts/test")
+def alert_test():
+    """手动发一条测试告警：配置完 webhook 后验收链路，不必等真故障。"""
+    from ..observability import alerts
+
+    return alerts.send_test()
+
+
+@router.get("/eval-intake")
+def eval_intake_stats():
+    """评测素材池现状：失败轮自动进料了多少、按来源分布、最近 5 条。"""
+    from ..services import eval_intake
+
+    return eval_intake.stats()
+
+
 @router.get("/audit")
 def audit_log(days: int = 7, limit: int = 100):
     """审计日志：写操作与被拒请求。数据源是本地 audit_log 表，与外部观测后端无关。"""

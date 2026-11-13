@@ -723,3 +723,22 @@ CREATE TABLE IF NOT EXISTS audit_log (
   duration_ms REAL NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts DESC);
+
+-- ---------------------------------------------------------------------------
+-- 告警历史（app/observability/alerts.py）。
+--
+-- 判定在本地 spans 表上做（滚动窗口的错误率 / 慢调用数），推送走 webhook。
+-- 每次触发都落一行——**没送达也要落**：`delivered=0` + `error` 让"告警没发出去"
+-- 本身可被看见，否则 webhook 断了以后告警变成静默失败，等于没有告警。
+-- cooldown 靠查这张表实现，不放在内存里：重启不丢冷却状态。
+CREATE TABLE IF NOT EXISTS alerts (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts        TEXT NOT NULL,                    -- ISO，触发时间
+  rule      TEXT NOT NULL,                    -- error_rate | slow_calls
+  severity  TEXT NOT NULL DEFAULT 'warning',
+  message   TEXT NOT NULL,                    -- 中文可读正文（即推送内容）
+  metrics   TEXT NOT NULL DEFAULT '{}',       -- 触发时的判定数据快照（JSON）
+  delivered INTEGER NOT NULL DEFAULT 0,       -- 1=webhook 返回了 2xx
+  error     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_ts ON alerts(ts DESC);

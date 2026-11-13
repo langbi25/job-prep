@@ -47,7 +47,22 @@ async def lifespan(app: FastAPI):
                   f"错误与慢调用 {_tr.SPAN_RETENTION_DAYS * 3} 天）")
     except Exception as e:  # noqa: BLE001
         print(f"[startup] span prune skipped: {e}")
+    # 可观测告警：错误率/慢调用超阈值推 webhook。未配置 ALERT_WEBHOOK_URL 或
+    # ALERT_CHECK_SEC=0 时不启动，零开销。循环在守护线程里，判定失败只打日志。
+    try:
+        from .observability import alerts as _alerts
+        if _alerts.start_background():
+            c = _alerts.config()
+            print(f"[startup] alerts on: 每 {c['check_sec']}s 检查，"
+                  f"错误率阈值 {c['error_rate']:.0%} / 慢调用 {c['slow_ms']}ms×{c['slow_count']}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[startup] alerts skipped: {e}")
     yield
+    try:
+        from .observability import alerts as _alerts
+        _alerts.stop_background()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 app = FastAPI(title="Job Prep KB", version="0.1.0", lifespan=lifespan)
