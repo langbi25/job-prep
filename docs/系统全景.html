@@ -1216,6 +1216,15 @@
   <b>如果只能记住这张文档里的一句话：</b>这套系统的复杂度不在「对话」，而在<strong>让每一次对话都留下可归因的痕迹</strong>——trace_id 缝合调用树与账单，<code>turn_facts</code> 把四类信号压成一行，<code>degraded_json</code> 记录每次妥协。功能可以少，痕迹不能断；痕迹一断，自进化就是幻觉。
 </div>
 
+<div class="callout">
+  <b>2026-11-14 变更：Agent 网关从单向变双向。</b>
+  本页图示生成于 11-13，未含此后新增的三处：① <code>app/mcp/registry.py</code> 成为工具清单唯一事实源
+  （18 条元数据，agent 面 17 / mcp 面 9，四处手写清单改为派生）；② docker-compose 新增可选
+  <code>mcp</code> sidecar（profile 隔离、<code>127.0.0.1:8766</code>、<b>默认不启动</b>，故部署图未画）；
+  ③ <code>app/mcp/external.py</code> 让内置 Agent 能调第三方 MCP server（白名单 + 失败隔离 + 默认关闭）。
+  详见《MCP接入》第 6 节与《Agent能力补强》第十四节。
+</div>
+
 <div class="foot">
   系统全景 · 生成于 2026-11-13 · 依据当前工作区代码与本地库实测数据 · 同目录另有《Agent能力补强》《Langfuse接入与企业级差距》《复盘-P0-P6全景与架构》可交叉阅读
 </div>
