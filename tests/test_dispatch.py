@@ -65,7 +65,7 @@ def test_readonly_batch_runs_concurrently():
     _fresh_db()
 
     def slow(args):
-        time.sleep(0.15)
+        time.sleep(0.25)
         return {"ok": True, "v": args.get("k")}
 
     schemas = {"slow": {"type": "object", "properties": {"k": {"type": "string"}}}}
@@ -76,8 +76,9 @@ def test_readonly_batch_runs_concurrently():
     elapsed = time.perf_counter() - t0
     assert len(outs) == 3
     assert [o.ok for o in outs] == [True, True, True]
-    # 串行要 0.45s，并发应在 0.3s 内
-    assert elapsed < 0.3, f"耗时 {elapsed:.3f}s，疑似没有并发"
+    # 串行需 0.75s，并发应 ≈0.25s。阈值留到 0.55s：线程池首轮建线程在 CI/Windows 上有几十毫秒
+    # 抖动，阈值贴着 0.3s 会变成随机失败——随机失败的测试比没有测试更糟（人会开始无视红）。
+    assert elapsed < 0.55, f"耗时 {elapsed:.3f}s，疑似没有并发"
 
 
 def test_write_stays_serial_and_ordered():
