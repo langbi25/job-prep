@@ -319,21 +319,24 @@ def _save_run(run_id: str, kind: str, status: str, steps: list, result: dict | N
         conn.close()
 
 
-def run_study_plan_agent(direction: str, max_iters: int = 6, toolbox=None) -> dict:
+def run_study_plan_agent(direction: str, max_iters: int = 6, toolbox=None,
+                         task: str | None = None) -> dict:
     """学习教练 Agent 对外入口：包一层 AGENT 根 span，trace_id 随结果返回。
 
     观测是横切关注点：场景标签 set 一次，链路内 llm/tool 的子 span 自动带上；
     OTel 关闭时 agent_span 退化成本地 uuid，落库关联逻辑不因此分叉。
+    task：具体任务指令（任务级评测用）。不传时行为与之前完全一致。
     """
     from ..observability import tracing as tr
     tr.set_scene(f"study_plan:{direction}")
     with tr.agent_span("agent.study_plan", {"agent.direction": direction}) as trace_id:
-        result = _run_study_plan_agent(direction, max_iters, toolbox)
+        result = _run_study_plan_agent(direction, max_iters, toolbox, task=task)
         result["trace_id"] = trace_id
         return result
 
 
-def _run_study_plan_agent(direction: str, max_iters: int = 6, toolbox=None) -> dict:
+def _run_study_plan_agent(direction: str, max_iters: int = 6, toolbox=None,
+                          task: str | None = None) -> dict:
     """原循环体（观测无关，保持纯净）。"""
     run_id = _new_run_id()
     steps: list = []
@@ -341,6 +344,10 @@ def _run_study_plan_agent(direction: str, max_iters: int = 6, toolbox=None) -> d
     tools = box.openai_tools()
     # prompt 从注册表渲染，不再硬编码——否则 prompt 文件里的 schema 约定形同虚设
     system, user, prompt_ver = prompts.render("study_plan", direction=direction)
+    # 任务级评测的关键：任务文本要真的进 prompt。之前 eval 只传 direction，
+    # 12 条任务跑成 12 次同样的调用，评测变成"模型是否稳定"而不是"能否完成任务"。
+    if task:
+        user = f"{user}\n本轮具体任务：{task.strip()}"
     messages = [
         {"role": "system", "content": system + "\n优先调用 get_daily_brief 掌握全局，再按需深入具体工具。"
                                              "需要回忆「我到底记过什么」时调用 search_kb（传题目原文或关键词）；"

@@ -269,7 +269,7 @@ def eval_agent_tasks() -> dict:
     details, ok_count = [], 0
     for t in tasks:
         try:
-            res = harness.run_study_plan_agent(t["direction"])
+            res = harness.run_study_plan_agent(t["direction"], task=t["task"])
         except Exception as e:  # noqa: BLE001  单条任务异常不能带崩整个套件
             details.append({"task": t["task"], "ok": False, "reason": f"{type(e).__name__}: {e}"})
             continue

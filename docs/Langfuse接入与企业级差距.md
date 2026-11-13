@@ -75,12 +75,12 @@ BatchSpanProcessor 导出失败只打日志、不重试上抛——这是**想�
 
 | 维度 | 现状 | 企业级要求 | 差距与是否值得补 |
 |---|---|---|---|
-| 可观测 | 本地埋点+全文+树+分级保留；Langfuse/Phoenix 分析层 | 告警、SLO、跨服务追踪 | **只差告警**。错误率/慢调用超阈值推送（webhook 即可，半天）。接完 Langfuse 后此维度封顶 |
+| 可观测 | 本地埋点+全文+树+分级保留；Langfuse/Phoenix 分析层；**✅ 告警已完成（2026-11-13 晚）**：错误率/慢调用超阈值 webhook 推送（`app/observability/alerts.py`，本地 spans 判定，冷却查表，没送达也落库） | 告警、SLO、跨服务追踪 | 剩余：SLO/跨服务追踪（单服务不需要）。此维度封顶 |
 | 安全/鉴权 | **✅ 已完成（2026-11-13）**：`APP_TOKEN` 静态令牌拦 `/api/*`（`app/core/guard.py`），CORS 收紧白名单；`audit_log` 表记写操作与 401，查询接口 `/api/obs/audit`。浏览器弹框输一次，脚本用 X-API-Token | 鉴权、最小权限、操作审计 | 剩余：无 HTTPS（内网可接受）；actor 仍是单身份，多人时需要升级为多 token/会话 |
 | 数据韧性 | **✅ 已完成（2026-11-13）**：`backup` sidecar 每天 02:00 在线备份（SQLite backup API，不停服），落宿主 `backups/` 保留 7 份，含 integrity_check 与恢复演练。仍是单库单机，无 PITR | 自动备份、可恢复演练、PITR | 剩余只有 PITR 与异地副本——个人项目不必 |
-| 流量治理 | 无限流、无并发池上限、无熔断 | 限流、超时、降级 | 个人使用不需要限流；但 **LLM 上游的并发池上限与超时**值得补（防一手卡全局） |
+| 流量治理 | **✅ LLM 并发池已完成（2026-11-13 晚）**：`llm.py` 全局 BoundedSemaphore（LLM_MAX_CONCURRENCY 默认 4）+ 排队超时快速失败（LLMConcurrencyError，retryable 同 429） | 限流、超时、降级 | LLM 上游治理完成；API 层限流个人使用不需要 |
 | 交付自动化 | **✅ 已完成（2026-11-13）**：`ci.yml` 跑全量 291 用例 + 前端构建，`evals.yml` 管线由 LLM key 控制；`requirements-dev.txt` 显式声明测试依赖 | CI 门禁、镜像自动构建 | 剩余：镜像未做 CI 构建与推送（本地 compose build 够用） |
-| 质量闭环 | 评测集、回归、归因、双写 Phoenix | 发布前自动门禁、会话自动沉淀 | 缺"会话自动入评测集"与发布门禁串联；这是最后一块闭环拼图 |
+| 质量闭环 | 评测集 77 例、回归、归因、双写 Phoenix；**✅ 自动进料已完成（2026-11-13 晚）**：点踩/失败轮自动进 data/eval_intake.jsonl，`promote_eval_cases.py` 提升入 evals；**✅ 任务级评测扩容 2→12 条**（任务文本已进 prompt，基线 12/12） | 发布前自动门禁、会话自动沉淀 | 剩余：素材→golden 的**人工标注**是流程不是代码；发布门禁串联等真有发布节奏再说 |
 | 多租户/权限 | 无 | 租户隔离、RBAC | 单人项目**不该补**，补了是负资产 |
 | 成本治理 | `pricing.py` 按调用算成本 | 预算、聚合报表 | Langfuse 接入后白拿聚合视图，够用 |
 

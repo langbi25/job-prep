@@ -1270,3 +1270,65 @@ init_db() → executescript(schema.sql) → sqlite3.OperationalError: no such co
   `GET /api/traces/blob/{span}?key=e0.args` 返回 1837 字符且逐字符一致。
 - **收益如实**：附件去重在真实数据上只有 2%（43 条引用 1 条重复），
   这一项是"防"不是"省"，别当成容量优化来宣传。
+
+## 十三、告警 / 并发池 / 评测自动进料（2026-11-13 晚）
+
+差距清单剩下的四件韧性/闭环活，一次收掉。
+
+### 13.1 可观测告警：本地事实源上的阈值判定 + webhook 推送
+
+`app/observability/alerts.py`。判定在 **spans 表**上做，不在 Langfuse——观测后端
+挂了告警也必须工作，这是"本地主存、旁路导出"原则在告警上的延续。
+
+- **错误率按顶层调用算**（parent_id IS NULL）：异常沿 span 链向上传播，一次失败
+  会标红多层；拿全部 span 算分母，阈值形同虚设。顶层调用 = "一次请求/一轮对话"的单位。
+- **没送达也要落库**（delivered=0 + error）：webhook 断了之后告警静默失败等于没有
+  告警，"告警系统失联"本身必须可发现（历史接口返回 deliver_failed 数）。
+- **冷却查表不查内存**：重启不丢状态。
+- 样本保护：窗口内顶层调用少于 ALERT_MIN_CALLS 不判错误率，防止凌晨一两次失败
+  触发 100% 告警。webhook 支持 generic/wecom/dingtalk 三种报文；
+  配好后 `POST /api/obs/alerts/test` 验收链路，不必等真故障。
+- 未配置 ALERT_WEBHOOK_URL 或 ALERT_CHECK_SEC=0：不启动后台循环，零开销。
+
+### 13.2 LLM 上游并发池
+
+`llm._chat_json` 这个咽喉上加了 BoundedSemaphore（LLM_MAX_CONCURRENCY，默认 4）。
+编排并行 + 记忆抽取 + 主对话全部受控；超出的排队（LLM_ACQUIRE_TIMEOUT，默认 30s），
+等不到抛 LLMConcurrencyError（retryable=True，语义同 429，调用方复用重试分支）。
+
+三个细节：
+- **额度在 span 之外拿**：排队时间不属于"这次调用"的耗时，混进 duration 会把
+  上游过载误读成模型变慢；等待时长单独记进 `llm.pool_wait_ms`（>50ms 才记）。
+- **失败必须归还额度**：`_pool_slot` 用 finally 语义，漏一次池永久缩水一格，
+  几次之后表现成"莫名全部排队超时"。
+- **排队失败也落失败账**：没花 token，但"尝试过、没发出去"必须可见——否则
+  上游过载时台账一片平静，用户端却全在报错。
+
+### 13.3 会话失败例自动进评测素材池
+
+`app/services/eval_intake.py`。点踩（user_reject）与失败轮（run_failed）自动把
+那一轮的（问题，回答）原文写进 `data/eval_intake.jsonl`，按 (session, turn, question)
+哈希去重。重试后成功的轮（llm_unstable）不进——链路抖动不是坏答案。
+
+**进料 ≠ 入集**：素材没有标注，直接混进 golden 会污染评分口径。分两步走：
+自动进料进 data/（容器里是挂载卷），`scripts/promote_eval_cases.py` 人工触发提升到
+evals/feedback_cases.jsonl，补上标注后才参与门禁。查看接口 `GET /api/obs/eval-intake`。
+
+测试默认关进料（conftest 统一 EVAL_INTAKE=0）：测试不该往真实数据目录倒垃圾。
+
+### 13.4 任务级评测：2 → 12 条，先修"任务没进 prompt"
+
+扩容时发现真问题：`eval_agent_tasks` 只把 direction 传给 agent，任务文本根本没进
+prompt——12 条任务会跑成 12 次同样的调用，评测的是"模型是否稳定"而不是"能否完成
+任务"。修法：`run_study_plan_agent` 加 `task` 参数拼进 user 消息（不传时行为不变）。
+
+12 条任务覆盖 3 个方向 × 4 种任务（学习计划/到期卡冲刺/薄弱巩固/高频优先）。
+第一轮基线 0.75：三个"复习冲刺"全挂在 time_budget——我写的 45 分钟上限没出现在
+任务文本里，agent 无从知晓。**约束必须写进任务本身，不能只写在判分器里**，
+这是任务级评测设计的第一课。修正后基线 **12/12 = 1.0**（阈值 0.8）。
+
+### 13.5 验收
+
+- `pytest tests/ -q` → **329 passed**（+25：并发池 6、告警 11、进料 8）；
+- 任务级基线 12/12；`npm run build` 未动前端。
+- 配置默认全部关闭（webhook 未配 / EVAL_INTAKE 默认开但进料失败自吞），本地与 CI 零行为差异。
