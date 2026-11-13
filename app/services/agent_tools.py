@@ -16,6 +16,7 @@ import json
 
 from ..core.db import get_conn
 from ..core import spec
+from ..mcp import registry
 from . import coverage_service, harness, ingest_service, multi_agent, retrospective_service
 
 MODE = contextvars.ContextVar("agent_mode", default="auto")
@@ -328,93 +329,6 @@ def _fetch_tool_result(args: dict) -> dict:
     return dispatch.fetch_result(ref, int(args.get("offset") or 0), int(args.get("limit") or 1500))
 
 
-SCHEMAS = [
-    {"type": "function", "function": {
-        "name": "ingest_text",
-        "description": "投喂一份面经原文：存档→抽取题目→过质量闸门→自动入池→起草待审卡片。"
-                       "用户粘贴面经、说'把这段收进去'时调用。返回 ingest_id / 题目数 / 是否自动入池 / 待审卡数。",
-        "parameters": {"type": "object", "properties": {
-            "text": {"type": "string", "description": "面经原文全文，不要截断、不要总结"},
-            "source_type": {"type": "string", "enum": ["paste", "url", "manual"], "description": "来源类型，粘贴用 paste"},
-            "max_cards": {"type": "integer", "description": "自动起草几张卡，默认 2，最多 3"},
-            "draft_cards": {"type": "boolean", "description": "入池后是否顺手起草卡，默认 true"}},
-            "required": ["text"]}}},
-    {"type": "function", "function": {
-        "name": "confirm_ingest",
-        "description": "对已被质量闸门拦下、停在 extracted 状态的材料执行入池。只有用户明确说'收/确认入池'时才调用。",
-        "parameters": {"type": "object", "properties": {
-            "ingest_id": {"type": "string", "description": "采集 id，形如 ing-20261104-231500-1234"}},
-            "required": ["ingest_id"]}}},
-    {"type": "function", "function": {
-        "name": "analyze_coverage",
-        "description": "生成/刷新一份面经的作战地图：逐题覆盖、预测档位、缺口清单。不给 id 就用最近一场。",
-        "parameters": {"type": "object", "properties": {
-            "interview_id": {"type": "string", "description": "面经 id，形如 2026-11-0002"}}}}},
-    {"type": "function", "function": {
-        "name": "draft_cards",
-        "description": "为题目池里的题起草知识卡，产出待审批动作（不会直接成为卡片）。按主题补卡传 topic，按具体题补卡传 question_ids，二者至少给一个。",
-        "parameters": {"type": "object", "properties": {
-            "topic": {"type": "string", "description": "主题，如「Flink 数据倾斜」。用户说「给XX补卡」时必须传这个，否则会从全池抓题、补错主题"},
-            "question_ids": {"type": "array", "items": {"type": "string"}, "description": "题目 id 列表，最多 3 个"},
-            "limit": {"type": "integer", "description": "最多起草几张，默认 2"},
-            "only_uncarded": {"type": "boolean", "description": "只挑还没有卡的题，默认 true"}}}}},
-    {"type": "function", "function": {
-        "name": "make_study_plan",
-        "description": "跑一轮学习教练 Agent，产出今天的学习计划（它会自己查到期卡/错题/薄弱主题）。",
-        "parameters": {"type": "object", "properties": {
-            "direction": {"type": "string", "enum": spec.enum()}}}}},
-    {"type": "function", "function": {
-        "name": "list_recent_ingests",
-        "description": "最近几次采集的状态，用于回答'刚才那份处理到哪了'。",
-        "parameters": {"type": "object", "properties": {
-            "limit": {"type": "integer", "description": "默认 5"}}}}},
-    {"type": "function", "function": {
-        "name": "list_pending_actions",
-        "description": "待审批的 Agent 动作（建卡/合并/归档/提前复习）。用于提醒用户去审批中心。",
-        "parameters": {"type": "object", "properties": {
-            "limit": {"type": "integer", "description": "默认 10"}}}}},
-    {"type": "function", "function": {
-        "name": "ingest_retrospective",
-        "description": "复盘文档一条龙：提炼面试考点→生成题目入池→起草知识卡（卡只进审批队列，不直接落库）。用户说'把这份复盘变成题目和卡片'时调用。",
-        "parameters": {"type": "object", "properties": {
-            "content": {"type": "string", "description": "复盘文档全文（与 source_path 二选一）"},
-            "source_path": {"type": "string", "description": "文档相对项目根的路径，如 docs/复盘-自进化闭环.md"},
-            "title": {"type": "string", "description": "文档标题，缺省取首行"},
-            "build_cards": {"type": "boolean", "description": "是否顺手起草卡（进审批），默认 true"},
-            "card_limit": {"type": "integer", "description": "最多起草几张，默认 2"}},
-            "required": []}}},
-    {"type": "function", "function": {
-        "name": "remember",
-        "description": "记住关于用户的一条长期信息（事实/偏好/任务状态）。用户说'以后都''记住''我的目标是'"
-                       "或明确纠正你之前理解时调用。同一主题用同一个 key，会覆盖旧值而不是堆两条。"
-                       "不要记一次性的查询结果或数字统计——那些现查更准。",
-        "parameters": {"type": "object", "properties": {
-            "kind": {"type": "string", "enum": ["fact", "preference", "task_state", "episode"],
-                     "description": "fact 事实 / preference 偏好 / task_state 进行中任务 / episode 经过结论"},
-            "key": {"type": "string", "description": "2~10 字主题词，如 目标岗位、面试时间、偏好-讲解粒度"},
-            "value": {"type": "string", "description": "一句话事实，不超过 60 字"},
-            "scope": {"type": "string", "enum": ["session", "global"],
-                      "description": "global=以后每次对话都生效；session=只对本次对话有效（默认）"},
-            "ttl_days": {"type": "integer", "description": "多少天后自动过期，不填按类型默认"}},
-            "required": ["kind", "key", "value"]}}},
-    {"type": "function", "function": {
-        "name": "recall_memory",
-        "description": "按主题检索关于用户的既有记忆。需要确认'他之前说过什么'时用；"
-                       "不要凭印象假设用户的偏好或目标。",
-        "parameters": {"type": "object", "properties": {
-            "query": {"type": "string", "description": "检索语句，如 目标岗位 / 讲题偏好 / 面试安排"},
-            "top_k": {"type": "integer", "description": "返回条数，默认 5"}},
-            "required": ["query"]}}},
-    {"type": "function", "function": {
-        "name": "fetch_tool_result",
-        "description": "取回之前某个工具被截断的结果片段。工具返回里出现 _ref 字段时说明结果太长已分片，"
-                       "用这个工具翻页，不要重新调用原工具（会浪费一轮且可能拿到同样被截断的结果）。",
-        "parameters": {"type": "object", "properties": {
-            "ref": {"type": "string", "description": "工具返回里的 _ref，形如 tr-xxxxxxxx"},
-            "offset": {"type": "integer", "description": "从第几个字符开始，默认 0"},
-            "limit": {"type": "integer", "description": "取多少字符，默认 1500，最多 4000"}},
-            "required": ["ref"]}}},
-]
 
 IMPL = {
     "ingest_text": _ingest_text,
@@ -429,6 +343,10 @@ IMPL = {
     "recall_memory": _recall_memory,
     "fetch_tool_result": _fetch_tool_result,
 }
+
+# schema 从 registry 派生：本模块只负责**实现**，"有哪些工具、参数长什么样"只有一个来源。
+# only=IMPL 表示"本模块实现了哪些就出哪些"，新增工具只需在 registry 里登记 + 在这里加实现。
+SCHEMAS = registry.schemas(surface="agent", only=IMPL)
 
 WRITE_TOOLS = {"ingest_text", "confirm_ingest", "analyze_coverage", "draft_cards", "make_study_plan",
                "ingest_retrospective", "remember"}

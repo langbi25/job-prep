@@ -12,7 +12,7 @@ from typing import Annotated
 from pydantic import Field
 
 from ..core import spec
-from . import gateway
+from . import gateway, registry
 
 
 def search_kb(
@@ -44,7 +44,9 @@ def list_due_cards(
 
 
 def get_weak_topics(
-    direction: Annotated[str | None, Field(description=f"方向过滤：{' / '.join(spec.enum())}")] = None,
+    direction: Annotated[str | None, Field(
+        description=f"方向过滤：{' / '.join(spec.enum())}",
+        json_schema_extra={"enum": spec.enum()})] = None,
 ) -> str:
     """薄弱主题清单：被面试打低分的卡 + 近 14 天错题主题。回答「我哪里最弱」时用。"""
     return gateway.invoke("get_weak_topics", {"direction": direction}).payload
@@ -58,18 +60,24 @@ def get_top_questions(
 
 
 def draft_cards(
+    topic: Annotated[str | None, Field(
+        description="主题，如「Flink 数据倾斜」。用户说「给 XX 补卡」时必须传，"
+                    "否则会从全池抓题、补错主题")] = None,
     question_ids: Annotated[list[str] | None, Field(description="题目 id 列表；不传则按高频无卡题挑")] = None,
     limit: Annotated[int, Field(description="最多起草几张，默认 2", ge=1, le=3)] = 2,
     only_uncarded: Annotated[bool, Field(description="只挑还没有卡的题")] = True,
 ) -> str:
     """为题目起草知识卡（写操作）。只产待审批动作，不会直接落库——用户要「帮我建卡」时才调。"""
     return gateway.invoke("draft_cards", {
-        "question_ids": question_ids, "limit": limit, "only_uncarded": only_uncarded}).payload
+        "topic": topic, "question_ids": question_ids, "limit": limit,
+        "only_uncarded": only_uncarded}).payload
 
 
 def ingest_text(
     text: Annotated[str, Field(description="面经原文全文，不要截断、不要总结")],
-    source_type: Annotated[str, Field(description="来源类型：paste / url / manual")] = "paste",
+    source_type: Annotated[str, Field(
+        description="来源类型：paste / url / manual",
+        json_schema_extra={"enum": ["paste", "url", "manual"]})] = "paste",
     draft_cards: Annotated[bool, Field(description="入池后是否顺手起草卡")] = True,
     max_cards: Annotated[int, Field(description="自动起草几张，默认 2", ge=0, le=3)] = 2,
 ) -> str:
@@ -93,5 +101,16 @@ def ingest_retrospective(
         "build_cards": build_cards, "card_limit": card_limit}).payload
 
 
-REGISTERED = [search_kb, get_card, get_daily_brief, list_due_cards, get_weak_topics,
-              get_top_questions, draft_cards, ingest_text, ingest_retrospective]
+_SIGNED = {fn.__name__: fn for fn in (
+    search_kb, get_card, get_daily_brief, list_due_cards, get_weak_topics,
+    get_top_questions, draft_cards, ingest_text, ingest_retrospective)}
+
+# 暴露哪些工具、什么顺序，一律以 registry 为准。这里只按名索引，不自己维护第三份名单：
+# 名单一旦手写就会和注册表分叉，而分叉的后果是「tools/list 里有、catalog 里没有」这种
+# 只有换客户端才发现的错位。
+_missing = [n for n in registry.names("mcp") if n not in _SIGNED]
+if _missing:
+    raise RuntimeError(
+        f"registry 声明了对外工具 {_missing}，但 app/mcp/tools.py 里没有对应签名函数。"
+        "MCP SDK 靠函数签名注解生成 inputSchema，必须补一个带 Annotated/Field 的薄壳。")
+REGISTERED = [_SIGNED[n] for n in registry.names("mcp")]

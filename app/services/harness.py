@@ -14,40 +14,10 @@ import traceback
 
 from ..core import config, embedder, llm, prompts, spec
 from ..core.db import get_conn
+from ..mcp import registry
 from . import review_service
 
 
-TOOLS = [
-    {"type": "function", "function": {
-        "name": "get_daily_brief",
-        "description": "获取候选人当前学习概况：到期卡片数、未解决错题数、近期模拟面试均分、薄弱卡片",
-        "parameters": {"type": "object", "properties": {}}}},
-    {"type": "function", "function": {
-        "name": "list_due_cards",
-        "description": "列出今日到期的复习卡片（含主题和掌握度）",
-        "parameters": {"type": "object", "properties": {"limit": {"type": "integer", "description": "最多返回条数"}}}}},
-    {"type": "function", "function": {
-        "name": "list_open_mistakes",
-        "description": "列出未解决的错题（含错因和主题）",
-        "parameters": {"type": "object", "properties": {"limit": {"type": "integer"}}}}},
-    {"type": "function", "function": {
-        "name": "get_weak_topics",
-        "description": "获取薄弱主题（低掌握度卡片 + 近 14 天错题主题），可按方向过滤",
-        "parameters": {"type": "object", "properties": {"direction": {"type": "string", "enum": spec.enum()}}}}},
-    {"type": "function", "function": {
-        "name": "get_top_questions",
-        "description": "获取面经题池中的高频题目（按出现次数排序）",
-        "parameters": {"type": "object", "properties": {"limit": {"type": "integer"}}}}},
-    {"type": "function", "function": {
-        "name": "search_kb",
-        "description": "在知识库里做混合检索，返回相关卡片（标题/主题/掌握度/要点原文）。"
-                       "需要回忆'我到底记过什么'时用它，不要凭记忆编内容。没命中说明是知识缺口。",
-        "parameters": {"type": "object", "properties": {
-            "query": {"type": "string", "description": "检索语句，可用题目原文或关键词"},
-            "topic": {"type": "string", "description": "限定主题（可选），如 Flink / Agent 记忆"},
-            "top_k": {"type": "integer", "description": "返回卡片数，默认 3，最多 5"}},
-            "required": ["query"]}}},
-]
 
 
 def _list_open_mistakes(args: dict) -> list:
@@ -168,6 +138,10 @@ _IMPL = {
     "get_top_questions": _top_questions,
     "search_kb": _search_kb,
 }
+
+# 工具清单一律从 registry 派生（唯一事实源）。在这里手写 schema 会和 MCP 那份分叉——
+# 分叉之后模型看到的说明与实际参数不一致，且只有走到那条路径时才会暴露。
+TOOLS = registry.schemas(surface="agent", only=_IMPL)
 
 
 def _new_run_id() -> str:

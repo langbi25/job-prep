@@ -67,7 +67,7 @@ curl -s -X POST http://127.0.0.1:8766/mcp \
 
 ## 2. 暴露了什么
 
-**Tools（8 个，模型决定调用）**
+**Tools（9 个，模型决定调用；读 6 写 3）**
 
 | 工具 | 类型 | 用途 |
 |---|---|---|
@@ -79,6 +79,7 @@ curl -s -X POST http://127.0.0.1:8766/mcp \
 | `get_top_questions` | 读 | 高频题（真实考点分布） |
 | `draft_cards` | 写 | 起草知识卡 → **只产待审批动作** |
 | `ingest_text` | 写 | 面经入库 → 抽题 / 质量闸门 / 起草卡 |
+| `ingest_retrospective` | 写 | 复盘文档一条龙：提炼考点 → 入池 → 起草卡 |
 
 **Resources**：`kb://brief/today`、`kb://card/{card_id}`
 **Prompts**：`mock_review`（面试复盘）、`card_from_question`（按题建卡）
@@ -143,8 +144,30 @@ HARNESS_TOOL_SOURCE=mcp python -c "from app.services.harness import run_study_pl
 enter/exit 在同一任务，跨任务退出会抛 `Attempted to exit cancel scope in a different task`
 ——所以会话生命周期只放在一个协程里，请求走队列进去，而不是每次调用 `asyncio.run`（那还会漏子进程）。
 
-注意两边**工具集合不完全相同**：内置 harness 6 个（含 `list_open_mistakes`，未对外暴露），
-MCP 8 个（多了 `get_card` / `draft_cards` / `ingest_text`）。切来源后模型看到的是 MCP 那一套。
+两边的**工具集合不同，但清单只有一个来源**：`app/mcp/registry.py` 登记 18 个工具，
+每条带 `surfaces` 标记，两个出口各自过滤——
+
+| 出口 | 数量 | 过滤条件 |
+|---|---|---|
+| 内置 harness | 17 | `surface="agent"`（细粒度：采集确认、记忆读写、结果翻页都给了） |
+| MCP 网关 | 9 | `surface="mcp"`（读 6 写 3，粒度按「一次对话回合能完成的任务」切） |
+
+`get_card` 是唯一只对外的工具（`surfaces=("mcp",)`）：它是「按 id 下钻全文」，
+服务外部宿主「先 search 拿摘要、再点进去看全文」的交互习惯；内置循环目前靠 `search_kb`
+回的要点摘要，不给全文下钻，避免学习计划多绕一次工具调用。
+
+改工具的正确流程（三处都由注册表派生，只需改两处）：
+
+1. 在 `registry.py` 加/改 `ToolDef`（描述与 JSON Schema 都在这里）；
+2. 在 `harness._IMPL` 或 `agent_tools.IMPL` 加实现；
+3. 若 `surfaces` 含 `mcp`，再在 `app/mcp/tools.py` 补一个带 `Annotated[..., Field(...)]`
+   的签名薄壳（MCP SDK 靠函数签名生成 inputSchema，绕不过去）。
+
+漏第 2 步或第 3 步都会在**导入期**抛错，不会等到模型调用时才发现。
+`tests/test_tool_registry.py` 11 条断言把这几层的一致性钉住了，包括
+「pydantic 生成的 inputSchema 与注册表的属性名/required/枚举逐项相同」——
+`draft_cards` 曾经就因为漏了这个比对而少暴露 `topic` 参数，
+外部客户端说「给 Flink 补卡」时传不进主题，只能从全池抓题、补错主题。
 
 **两条路怎么选**：
 - 评测、批量跑 → 进程内直调（快、无子进程，24 用例省 0.5 秒）；
@@ -156,4 +179,6 @@ MCP 8 个（多了 `get_card` / `draft_cards` / `ingest_text`）。切来源后�
 - 单用户单库：没有多租户和行级权限，HTTP 只做了 Bearer 校验；
 - 没有实现 resource 订阅与 progress 通知，长任务（如 `ingest_text`）是同步返回；
 - 选择档依赖 LLM_API_KEY，未配置时自动跳过并标注，不算失败；
-- 24 条用例覆盖 8 个工具，边界问法（同义改写、跨工具组合）还需要扩。
+- 24 条用例覆盖 9 个工具，边界问法（同义改写、跨工具组合）还需要扩；
+- MCP 的 HTTP 传输代码支持（`--http` + `MCP_TOKEN`），但 **docker-compose 里没有映射 8766 端口**，
+  容器内只有 stdio 这条路实际可用；远程接入需要先补端口与 token 注入。

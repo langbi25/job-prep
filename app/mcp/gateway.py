@@ -20,6 +20,7 @@ from typing import Any, Callable
 
 from ..core.db import get_conn
 from ..services import agent_tools, harness, kb_service
+from . import registry
 
 # 单次返回给客户端的字符上限。6000 字≈3k token，足够一份卡详情，又不会撑爆上下文。
 MAX_RESULT_CHARS = 6000
@@ -60,40 +61,35 @@ def _get_card(args: dict) -> dict:
     }
 
 
-# 注册表：顺序即 tools/list 返回顺序。只暴露 8 个，粒度按「一次对话回合能完成的任务」切，
-# 不按表 CRUD——工具越多，模型选错率越高、多轮往返越多。
-SPECS: dict[str, ToolSpec] = {
-    "search_kb": ToolSpec(
-        "search_kb", "在个人知识库里做混合检索（关键词 + 向量），返回相关卡片要点", True,
-        harness._IMPL["search_kb"], {"query": "Flink 反压排查", "top_k": 3}),
-    "get_card": ToolSpec(
-        "get_card", "按 card_id 取一张知识卡的完整内容（要点/常见坑/覆盖的题）", True,
-        _get_card, {"card_id": "kb-agent-memory-001"}),
-    "get_daily_brief": ToolSpec(
-        "get_daily_brief", "今天的学习概况：到期卡、未解决错题、近期面试均分、薄弱卡", True,
-        harness._IMPL["get_daily_brief"], {}),
-    "list_due_cards": ToolSpec(
-        "list_due_cards", "列出今日到期的复习卡片（含主题与掌握度）", True,
-        harness._IMPL["list_due_cards"], {"limit": 10}),
-    "get_weak_topics": ToolSpec(
-        "get_weak_topics", "薄弱主题：低掌握度卡片 + 近 14 天错题主题，可按方向过滤", True,
-        harness._IMPL["get_weak_topics"], {"direction": "backend"}),
-    "get_top_questions": ToolSpec(
-        "get_top_questions", "题目池高频题（按面经出现次数排序），代表真实考点分布", True,
-        harness._IMPL["get_top_questions"], {"limit": 5}),
-    "draft_cards": ToolSpec(
-        "draft_cards", "为题目起草知识卡（进审批队列）：按主题传 topic，按题传 question_ids", False,
-        agent_tools.IMPL["draft_cards"], {"topic": "Flink 数据倾斜", "limit": 2}),
-    "ingest_text": ToolSpec(
-        "ingest_text", "投喂面经原文：存档→抽题→过质量闸门→入池→起草待审卡（写操作）", False,
-        agent_tools.IMPL["ingest_text"], {"text": "面经原文…", "draft_cards": True}),
-    "ingest_retrospective": ToolSpec(
-        "ingest_retrospective",
-        "复盘文档一条龙：提炼面试考点→题目入池→起草待审卡（写操作，产物走审批）",
-        False, agent_tools.IMPL["ingest_retrospective"],
-        {"source_path": "docs/复盘-自进化闭环.md", "build_cards": True}),
+# 对外暴露的工具：**元数据全部来自 registry**（唯一事实源）。这里只补两样 registry 不该知道的东西——
+# handler 绑定（实现住在 service 层）与 example（面板"试跑"的预填参数）。
+_IMPL = {**harness._IMPL, **agent_tools.IMPL}
+
+# get_card 只有 MCP 侧有实现：它是「按 id 下钻全文」，服务的是外部宿主的交互习惯
+# （模型先 search 拿摘要、再点进去看全文）。内置循环目前不暴露它，靠 search_kb 回要点。
+# 单独放这里而不是塞进 harness._IMPL——那会让「内部可见集」悄悄多一个工具。
+_EXTRA_IMPL = {"get_card": _get_card}
+
+_EXAMPLES = {
+    "search_kb": {"query": "Flink 反压排查", "top_k": 3},
+    "get_card": {"card_id": "kb-agent-memory-001"},
+    "get_daily_brief": {},
+    "list_due_cards": {"limit": 10},
+    "get_weak_topics": {"direction": "backend"},
+    "get_top_questions": {"limit": 5},
+    "draft_cards": {"topic": "Flink 数据倾斜", "limit": 2},
+    "ingest_text": {"text": "面经原文…", "draft_cards": True},
+    "ingest_retrospective": {"source_path": "docs/复盘-自进化闭环.md", "build_cards": True},
 }
 
+SPECS: dict[str, ToolSpec] = {}
+for _d in registry.mcp_tools():
+    _h = _EXTRA_IMPL.get(_d.name) or _IMPL.get(_d.name)
+    if _h is None:
+        # 启动即失败：注册表声明了对外工具却没有实现，等于告诉客户端"我有这个能力"然后必然失败。
+        # 这种错误在导入期炸掉，比等模型调用时返回 unknown 好——后者会被模型当成偶发故障重试。
+        raise RuntimeError(f"registry 声明了对外工具 {_d.name}，但 harness/agent_tools 里没有实现")
+    SPECS[_d.name] = ToolSpec(_d.name, _d.summary, _d.read_only, _h, _EXAMPLES.get(_d.name, {}))
 
 def catalog() -> list[dict]:
     return [{"name": s.name, "summary": s.summary, "read_only": s.read_only,
