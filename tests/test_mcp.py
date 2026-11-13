@@ -39,24 +39,35 @@ def test_read_write_boundary():
 
 
 def test_invoke_logs_and_unknown_tool():
-    init_db()
-    conn = get_conn()
+    """调用日志必须落库。**跑在临时库上**：这个用例会写 mcp_calls 和 spans，
+    不隔离的话开发库里会多出 session_id='s-test' 的假工具调用——
+    它看起来和真调用一模一样，直接把「调用树」列表和耗时统计带偏。"""
+    import tempfile
+
+    from app.core import db as _db
+
+    tmp = Path(tempfile.mkdtemp(prefix="mcp-test-")) / "kb.sqlite"
+    old = _db.DB_PATH
+    _db.close_thread_conns()
+    _db.DB_PATH = tmp
     try:
-        before = conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0]
+        init_db()
+        out = gateway.invoke("get_daily_brief", {}, client="test")
+        assert out.ok and out.payload and out.chars > 2
+        bad = gateway.invoke("no_such_tool", {}, client="test")
+        assert not bad.ok and "未知工具" in bad.payload
+        conn = get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT tool, status FROM mcp_calls ORDER BY id DESC LIMIT 2").fetchall()
+        finally:
+            conn.close()
+        assert len(rows) == 2
+        assert rows[0]["tool"] == "no_such_tool" and rows[0]["status"] == "error"
+        assert rows[1]["tool"] == "get_daily_brief" and rows[1]["status"] == "ok"
     finally:
-        conn.close()
-    out = gateway.invoke("get_daily_brief", {}, client="test")
-    assert out.ok and out.payload and out.chars > 2
-    bad = gateway.invoke("no_such_tool", {}, client="test")
-    assert not bad.ok and "未知工具" in bad.payload
-    conn = get_conn()
-    try:
-        rows = conn.execute("SELECT tool, status FROM mcp_calls ORDER BY id DESC LIMIT 2").fetchall()
-    finally:
-        conn.close()
-    assert len(rows) == 2
-    assert rows[0]["tool"] == "no_such_tool" and rows[0]["status"] == "error"
-    assert rows[1]["tool"] == "get_daily_brief" and rows[1]["status"] == "ok"
+        _db.close_thread_conns()
+        _db.DB_PATH = old
 
 
 def test_write_tool_blocked_from_ui():

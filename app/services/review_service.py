@@ -123,8 +123,46 @@ def writeback_after_session(session_id: str, records: list[dict], direction: str
 
 # ============ SRS 复习 ============
 
+def due_stats(conn=None) -> dict:
+    """到期卡的**唯一口径**。prompt、每日简报、复习页、MCP 工具全部从这里取。
+
+    两个桶必须分开算，不能合成一个「待复习 N 张」：
+    - 新卡（srs_due 为空）从没做过首次学习，该做的是「学」；
+    - 逾期卡有排期但已过期，该做的是「测」。
+    合在一起用户不知道从哪张开始，也回答不了「最久逾期几天」——而这个数字
+    才是让人真的去复习的理由。
+
+    为什么用 COUNT 而不是 len(due_cards(limit=100))：
+    旧版每日简报取前 100 条再取长度，卡超过 100 张就少报，而且页面看起来正常，
+    没人会发现少报了。
+    """
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        t = today()
+        row = conn.execute(
+            "SELECT COUNT(*) AS active, "
+            "COALESCE(SUM(CASE WHEN srs_due IS NULL THEN 1 ELSE 0 END), 0) AS new_cards, "
+            "COALESCE(SUM(CASE WHEN srs_due IS NOT NULL AND srs_due<=? THEN 1 ELSE 0 END), 0) AS overdue, "
+            "MIN(CASE WHEN srs_due IS NOT NULL AND srs_due<=? THEN srs_due END) AS oldest_due "
+            "FROM kb_cards WHERE status='active'", (t, t)).fetchone()
+        oldest_days = 0
+        if row["oldest_due"]:
+            oldest_days = conn.execute(
+                "SELECT CAST(julianday(?)-julianday(?) AS INTEGER) AS d",
+                (t, row["oldest_due"])).fetchone()["d"]
+        new_n, overdue = int(row["new_cards"]), int(row["overdue"])
+        return {"new": new_n, "overdue": overdue, "due_total": new_n + overdue,
+                "oldest_overdue_days": int(oldest_days or 0),
+                "active": int(row["active"])}
+    finally:
+        if own:
+            conn.close()
+
+
 def due_cards(limit: int = 20) -> list[dict]:
-    """今日到期：srs_due 为空（新卡）或 <= 今天的卡片。"""
+    """今日到期的卡（新卡在前、逾期久的优先）。计数请用 due_stats，不要数这个列表。"""
     conn = get_conn()
     try:
         rows = conn.execute(
@@ -187,7 +225,8 @@ def weak_topics(direction: str | None = None, limit: int = 5) -> list[dict]:
 
 
 def daily_brief() -> dict:
-    due = due_cards(limit=100)
+    stats = due_stats()
+    due = due_cards(limit=5)
     conn = get_conn()
     try:
         open_mistakes = conn.execute("SELECT COUNT(*) AS n FROM mistakes WHERE resolved=0").fetchone()["n"]
@@ -203,8 +242,12 @@ def daily_brief() -> dict:
             mock_avgs.append(json.loads(r["overall_json"]).get("overall_avg"))
     return {
         "date": today(),
-        "due_cards": len(due),
-        "due_preview": due[:5],
+        "due_cards": stats["due_total"],
+        "due_new": stats["new"],
+        "due_overdue": stats["overdue"],
+        "oldest_overdue_days": stats["oldest_overdue_days"],
+        "active_cards": stats["active"],
+        "due_preview": due,
         "open_mistakes": open_mistakes,
         "pending_ingests": pending,
         "recent_mock_avgs": mock_avgs,

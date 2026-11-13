@@ -73,6 +73,36 @@ def _linked_card(conn, question_id: str | None):
     return None
 
 
+def _exact_match(conn, text: str, topic: str | None = None) -> dict | None:
+    """向量通道不可用时的兜底匹配。
+
+    为什么不能直接返回 None：None 的语义是「这道题没有卡」，而 draft_cards 用它决定
+    要不要起草新卡——向量库为空、embedding 接口挂掉、新环境没建索引时，所有题都会被
+    判成「缺卡」，于是给已经有卡的题重复起草，产出一堆重复草稿让人逐条筛。
+
+    「无法判断」和「确定没有」必须分开。这里宁可漏判（多一张待审草稿，人看得见），
+    也不要漏掉真实覆盖。
+    """
+    t = (text or "").strip()
+    if not t:
+        return None
+    sql = "SELECT id, title, topic, mastery, question FROM kb_cards WHERE status='active' LIMIT 500"
+    rows = conn.execute(sql).fetchall()
+    # 同主题的排前面：文本高度重合但主题不同的，多半是另一道题
+    if topic:
+        rows = sorted(rows, key=lambda r: 0 if r["topic"] == topic else 1)
+    for r in rows:
+        q = (r["question"] or "").strip()
+        if not q:
+            continue
+        if q == t:
+            return dict(r) | {"similarity": 1.0, "via": "exact"}
+        short, long_ = (q, t) if len(q) <= len(t) else (t, q)
+        if len(short) >= 20 and short in long_ and len(short) / len(long_) >= 0.6:
+            return dict(r) | {"similarity": round(len(short) / len(long_), 3), "via": "exact"}
+    return None
+
+
 def _match_card(conn, text: str, topic: str | None = None,
                 question_id: str | None = None) -> dict | None:
     """题目 ↔ 知识卡匹配，三级判定：
@@ -86,15 +116,17 @@ def _match_card(conn, text: str, topic: str | None = None,
     取 top_k=3 而不是 1：最近邻可能是另一张卡的噪声（q-0029 的 top3 是 0.804/0.799/0.787），
     只看最近邻会因为"第一张恰好跨主题"而漏掉后面真正同主题的那张。
     """
-    if not embedder.available():
-        return None
+    # 硬关联不依赖向量通道，永远先查：它是建卡时记下的确定关系，比相似度可靠。
     linked = _linked_card(conn, question_id)
     if linked:
         return linked
+    if not embedder.available():
+        return _exact_match(conn, text, topic)
     try:
         hits = embedder.search_similar(text, "card", top_k=3)
     except Exception:
-        return None
+        # 检索失败 ≠ 没有卡。不兜底的话，一次接口抖动就会让整轮补卡重复起草。
+        return _exact_match(conn, text, topic)
     for card_id, sim in hits:
         row = _card_row(conn, card_id)
         if not row:
@@ -102,7 +134,9 @@ def _match_card(conn, text: str, topic: str | None = None,
         need = SIM_MIN if _same_topic(topic, row["topic"]) else CROSS_TOPIC_MIN
         if sim >= need:
             return dict(row) | {"similarity": round(sim, 3), "via": "semantic"}
-    return None
+    # 语义零命中：可能是真的没有卡，也可能是 embeddings 表还没写入向量
+    # （新环境、刚导入的卡、重建索引中断）。两者不能混为一谈——用文本再兜一次。
+    return _exact_match(conn, text, topic)
 
 
 def _predict(card: dict | None) -> tuple[str, str | None]:

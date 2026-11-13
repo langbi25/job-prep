@@ -77,13 +77,18 @@ def tokens_to_chars(tokens: int) -> int:
 
 @dataclass
 class Budget:
-    """一次请求的预算。分区比例沿用方案：system 15% / 检索 25% / 历史 60%。"""
+    """一次请求的预算。分区比例：system 15% / 检索 22% / 记忆 8% / 历史 55%。
+
+    memory 分区是 2026-11-12 加的：长期记忆条数少（百级）、单条短，
+    但它决定"这一轮把用户当成谁"——给 8% 足够装 20 条，且不挤占历史。
+    """
 
     window: int = 64000
     output_reserve: int = 1024
     safety: int = 512
     soft_cap: int = 12000
-    shares: dict = field(default_factory=lambda: {"system": 0.15, "retrieval": 0.25, "history": 0.60})
+    shares: dict = field(default_factory=lambda: {
+        "system": 0.15, "retrieval": 0.22, "memory": 0.08, "history": 0.55})
 
     @property
     def capacity(self) -> int:

@@ -308,6 +308,10 @@ def search(query: str, scope: str = "cards", top_k: int = 5, mode: str = "hybrid
         hits = _search_inner(query, scope, top_k, mode)
         if s is not None:
             s.set_attribute("retriever.n_hits", len(hits))
+            # 走了哪几条召回腿（fts / vector / rewrite / rerank）：答得不好时
+            # 第一个要问的就是"是没召回，还是召回了没排上"。
+            legs = sorted({leg for h in hits for leg in (h.get("legs") or [])})
+            s.set_attribute("retriever.legs", ",".join(legs) or "-")
             s.set_attribute("output.value", json.dumps(
                 [{"id": h.get("id"), "score": h.get("score")} for h in hits[:top_k]],
                 ensure_ascii=False))

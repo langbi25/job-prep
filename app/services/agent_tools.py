@@ -19,6 +19,10 @@ from ..core import spec
 from . import coverage_service, harness, ingest_service, multi_agent, retrospective_service
 
 MODE = contextvars.ContextVar("agent_mode", default="auto")
+# 当前会话 id：记忆工具要知道"这条记忆属于哪场对话"。
+# 用 contextvar 而不是给每个工具加参数——工具签名是对模型暴露的契约，
+# 不该为了内部记账多一个模型必须填的字段（它会填错）。
+SESSION = contextvars.ContextVar("agent_session", default=None)
 
 MIN_QUESTIONS = 1
 MAX_QUESTIONS = 40          # 超过这个数基本是把整页导航/评论都当题抽了
@@ -182,16 +186,25 @@ def _draft_cards(args: dict) -> dict:
         return _denied("起草知识卡")
     qids = [str(x) for x in (args.get("question_ids") or []) if str(x).strip()][:3]
     cap = max(1, min(int(args.get("limit") or 2), 3))
+    topic = (args.get("topic") or "").strip() or None
+    if not qids and not topic:
+        # 不给主题也不给 id 时，只能按全池频次抓前 N 条——那会补出别的主题的卡。
+        # 与其产出一批错卡让用户逐条筛，不如直接拒绝并说清楚要什么。
+        return {"ok": False, "error": "必须给 topic 或 question_ids。按主题补卡请传 topic，"
+                                     "按具体题补卡请传 question_ids（可用 get_top_questions 查）"}
     try:
         d = multi_agent.draft_cards(qids or None, limit=cap,
                                     only_uncarded=bool(args.get("only_uncarded", True)),
-                                    low_risk=True)
+                                    low_risk=True, topic=topic)
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)}
-    return {"ok": True, "drafted": d.get("inserted", 0),
-            "failed": len(d.get("failed") or []),
-            "titles": [x["title"][:30] for x in d.get("drafted") or []],
-            "next": "等人在审批中心批准后才会成为知识卡"}
+    out = {"ok": True, "drafted": d.get("inserted", 0),
+           "failed": len(d.get("failed") or []),
+           "titles": [x["title"][:30] for x in d.get("drafted") or []]}
+    if d.get("skipped"):
+        out["skipped"] = d["skipped"]
+    out["next"] = "等人在审批中心批准后才会成为知识卡"
+    return out
 
 
 def _make_study_plan(args: dict) -> dict:
@@ -268,6 +281,53 @@ def _ingest_retrospective(args: dict) -> dict:
     return {"ok": True, **out}
 
 
+def _list_pending_actions(args: dict) -> dict:
+    return {"ok": True, "actions": multi_agent.list_actions("pending")}
+
+
+def _remember(args: dict) -> dict:
+    """显式记忆写入。走 MODE 闸门：只查不改模式下不允许悄悄改记忆。
+
+    为什么要给模型这个工具，而不是只靠异步抽取：
+    抽取是"猜"，显式是"被告知"。用户说"以后都按这个来"时，必须有确定性路径落库，
+    否则一句叮嘱活不过 10 轮对话。
+    """
+    if not _writable():
+        return _denied("记住信息")
+    from ..memory import manager as memory_manager
+    key = str(args.get("key") or "").strip()
+    value = str(args.get("value") or "").strip()
+    if not key or not value:
+        return {"ok": False, "error": "key 与 value 都不能为空"}
+    res = memory_manager.remember(
+        str(args.get("kind") or "fact"), key, value,
+        scope=str(args.get("scope") or "session"), session_id=SESSION.get(),
+        ttl_days=args.get("ttl_days"))
+    res["ok"] = bool(res.get("ok"))
+    return res
+
+
+def _recall_memory(args: dict) -> dict:
+    from ..memory import manager as memory_manager
+    q = str(args.get("query") or "").strip()
+    if not q:
+        return {"ok": False, "error": "query 不能为空"}
+    hits = memory_manager.recall(q, session_id=SESSION.get(), top_k=int(args.get("top_k") or 5))
+    return {"ok": True, "count": len(hits),
+            "memories": [{"kind": h["kind"], "key": h["key"], "value": h["value"],
+                          "confidence": h["confidence"], "scope": h["scope"],
+                          "updated_at": h["updated_at"]} for h in hits]}
+
+
+def _fetch_tool_result(args: dict) -> dict:
+    """翻页读取被分片的工具结果。只读，不需要 MODE 闸门。"""
+    from ..mcp import dispatch
+    ref = str(args.get("ref") or "").strip()
+    if not ref:
+        return {"ok": False, "error": "ref 不能为空"}
+    return dispatch.fetch_result(ref, int(args.get("offset") or 0), int(args.get("limit") or 1500))
+
+
 SCHEMAS = [
     {"type": "function", "function": {
         "name": "ingest_text",
@@ -292,9 +352,10 @@ SCHEMAS = [
             "interview_id": {"type": "string", "description": "面经 id，形如 2026-11-0002"}}}}},
     {"type": "function", "function": {
         "name": "draft_cards",
-        "description": "为题目池里的题起草知识卡，产出待审批动作（不会直接成为卡片）。",
+        "description": "为题目池里的题起草知识卡，产出待审批动作（不会直接成为卡片）。按主题补卡传 topic，按具体题补卡传 question_ids，二者至少给一个。",
         "parameters": {"type": "object", "properties": {
-            "question_ids": {"type": "array", "items": {"type": "string"}, "description": "题目 id 列表，最多 3 个；不传则按高频无卡题挑"},
+            "topic": {"type": "string", "description": "主题，如「Flink 数据倾斜」。用户说「给XX补卡」时必须传这个，否则会从全池抓题、补错主题"},
+            "question_ids": {"type": "array", "items": {"type": "string"}, "description": "题目 id 列表，最多 3 个"},
             "limit": {"type": "integer", "description": "最多起草几张，默认 2"},
             "only_uncarded": {"type": "boolean", "description": "只挑还没有卡的题，默认 true"}}}}},
     {"type": "function", "function": {
@@ -322,6 +383,37 @@ SCHEMAS = [
             "build_cards": {"type": "boolean", "description": "是否顺手起草卡（进审批），默认 true"},
             "card_limit": {"type": "integer", "description": "最多起草几张，默认 2"}},
             "required": []}}},
+    {"type": "function", "function": {
+        "name": "remember",
+        "description": "记住关于用户的一条长期信息（事实/偏好/任务状态）。用户说'以后都''记住''我的目标是'"
+                       "或明确纠正你之前理解时调用。同一主题用同一个 key，会覆盖旧值而不是堆两条。"
+                       "不要记一次性的查询结果或数字统计——那些现查更准。",
+        "parameters": {"type": "object", "properties": {
+            "kind": {"type": "string", "enum": ["fact", "preference", "task_state", "episode"],
+                     "description": "fact 事实 / preference 偏好 / task_state 进行中任务 / episode 经过结论"},
+            "key": {"type": "string", "description": "2~10 字主题词，如 目标岗位、面试时间、偏好-讲解粒度"},
+            "value": {"type": "string", "description": "一句话事实，不超过 60 字"},
+            "scope": {"type": "string", "enum": ["session", "global"],
+                      "description": "global=以后每次对话都生效；session=只对本次对话有效（默认）"},
+            "ttl_days": {"type": "integer", "description": "多少天后自动过期，不填按类型默认"}},
+            "required": ["kind", "key", "value"]}}},
+    {"type": "function", "function": {
+        "name": "recall_memory",
+        "description": "按主题检索关于用户的既有记忆。需要确认'他之前说过什么'时用；"
+                       "不要凭印象假设用户的偏好或目标。",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "检索语句，如 目标岗位 / 讲题偏好 / 面试安排"},
+            "top_k": {"type": "integer", "description": "返回条数，默认 5"}},
+            "required": ["query"]}}},
+    {"type": "function", "function": {
+        "name": "fetch_tool_result",
+        "description": "取回之前某个工具被截断的结果片段。工具返回里出现 _ref 字段时说明结果太长已分片，"
+                       "用这个工具翻页，不要重新调用原工具（会浪费一轮且可能拿到同样被截断的结果）。",
+        "parameters": {"type": "object", "properties": {
+            "ref": {"type": "string", "description": "工具返回里的 _ref，形如 tr-xxxxxxxx"},
+            "offset": {"type": "integer", "description": "从第几个字符开始，默认 0"},
+            "limit": {"type": "integer", "description": "取多少字符，默认 1500，最多 4000"}},
+            "required": ["ref"]}}},
 ]
 
 IMPL = {
@@ -333,10 +425,13 @@ IMPL = {
     "list_recent_ingests": _list_recent_ingests,
     "list_pending_actions": _list_pending_actions,
     "ingest_retrospective": _ingest_retrospective,
+    "remember": _remember,
+    "recall_memory": _recall_memory,
+    "fetch_tool_result": _fetch_tool_result,
 }
 
 WRITE_TOOLS = {"ingest_text", "confirm_ingest", "analyze_coverage", "draft_cards", "make_study_plan",
-               "ingest_retrospective"}
+               "ingest_retrospective", "remember"}
 
 
 def json_safe(obj, limit: int = 2600) -> str:

@@ -1,0 +1,50 @@
+name: memory_extract
+version: 1
+description: 一轮对话后抽取值得跨轮记住的事实/偏好，写入 agent_memory（异步，不阻塞对话）
+system: |
+  你负责从一轮对话里抽取「下一轮还用得上」的长期信息。只输出 JSON，不要解释。
+
+  记四类：
+  - fact        关于用户本身的稳定事实：目标岗位、技术栈、工作年限、面试时间、项目经历
+  - preference  偏好与风格：想被怎么讲、讨厌什么、回答要多长、要不要举例
+  - task_state  跨轮进行中的任务状态：「面经已收、还差 3 张卡没补」这类进度
+  - episode     一次性的经过与结论：「这轮定位到 Flink 反压是薄弱点」
+
+  绝对不记：
+  - 工具返回的具体数据（今天几张卡、题目列表、统计数字）——下一轮现查更准，记下来就是过时数据
+  - 通用知识或助手的推测（「Flink 靠 checkpoint 容错」不是关于这个用户的事）
+  - 寒暄与确认（好 / 继续 / 谢谢 / 收到）
+
+  key：2~10 字的名词短语，可复用，如「目标岗位」「面试时间」「偏好-讲解粒度」。
+  同一件事必须用同一个 key，不要造同义词——key 是去重和版本化的唯一依据。
+  value：一句话，不超过 60 字，写事实不写评价。
+  confidence：用户明确陈述 0.9；从上下文推断 0.6；只是猜测 0.4（宁可不记）。
+  scope：按 kind 定，只有明确反例才改：
+    preference → 一律 global（"怎么讲、多长、要不要举例"换个会话也成立）
+    fact       → 默认 global（目标岗位、技术栈、工作年限长期有效）；
+                 只有"某场面试在明天下午"这种具体安排用 session
+    task_state → 一律 session（进度随会话结束而失效）
+    episode    → 默认 session；若结论已沉淀成对自己的长期判断
+                 （"我的核心短板是会用不会调"）用 global
+
+  判断标准：**换一个新会话，这条还成不成立**。成立就 global。
+
+  没有可记的内容就返回 {{"memories": []}}。
+user: |
+  用户这轮说：
+  {message}
+
+  助手这轮答：
+  {reply}
+
+  已知记忆（重复的不要再写；同一 key 的新事实才写，会覆盖旧值）：
+  {known}
+
+  输出 JSON：{{"memories": [{{"kind": "fact|preference|task_state|episode", "key": "目标岗位", "value": "字节跳动后端", "confidence": 0.9, "scope": "global"}}]}}
+output_schema:
+  memories:
+    - kind: fact|preference|task_state|episode
+      key: string
+      value: string
+      confidence: number
+      scope: global|session

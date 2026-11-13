@@ -82,8 +82,8 @@ SPECS: dict[str, ToolSpec] = {
         "get_top_questions", "题目池高频题（按面经出现次数排序），代表真实考点分布", True,
         harness._IMPL["get_top_questions"], {"limit": 5}),
     "draft_cards": ToolSpec(
-        "draft_cards", "为题目起草知识卡——只产待审批动作，不会直接落库", False,
-        agent_tools.IMPL["draft_cards"], {"question_ids": ["q-0001"], "limit": 1}),
+        "draft_cards", "为题目起草知识卡（进审批队列）：按主题传 topic，按题传 question_ids", False,
+        agent_tools.IMPL["draft_cards"], {"topic": "Flink 数据倾斜", "limit": 2}),
     "ingest_text": ToolSpec(
         "ingest_text", "投喂面经原文：存档→抽题→过质量闸门→入池→起草待审卡（写操作）", False,
         agent_tools.IMPL["ingest_text"], {"text": "面经原文…", "draft_cards": True}),
@@ -175,7 +175,7 @@ def invoke(name: str, args: dict | None, *, client: str = "stdio") -> Outcome:
             payload = json.dumps({"error": error, "tool": name}, ensure_ascii=False)
             ok = False
         if s is not None:
-            s.set_attribute("output.value", payload[:1000])
+            s.set_attribute("output.value", payload)
             s.set_attribute("tool.result_chars", len(payload))
             tr.record_tool_action(s, result if isinstance(result, dict) else None)
     latency_ms = int((time.perf_counter() - t0) * 1000)

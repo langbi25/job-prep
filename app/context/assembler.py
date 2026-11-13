@@ -22,6 +22,7 @@ import json
 
 from ..core import config
 from ..core.db import get_conn
+from ..memory import manager as memory_manager
 from . import memory_retriever, summarizer, window
 from .token_budget import Budget, count_messages, count_tokens, default_budget, log_ctx
 
@@ -45,14 +46,23 @@ class CtxResult:
                 "anchored": self.stats.get("anchored", 0),
                 "summary_used": self.stats.get("summary_used", False),
                 "retrieved_n": self.stats.get("retrieved_n", 0),
+                "memory_n": self.stats.get("memory_n", 0),
+                "hit_ids": self.stats.get("hit_ids", []),
                 "degraded": self.stats.get("degraded", []),
                 "fallback": self.stats.get("fallback")}
 
 
-def _join_system(system: str, summary_block: str, retrieval_block: str) -> str:
+def _join_system(system: str, summary_block: str, memory_block: str, retrieval_block: str) -> str:
+    """拼 system。顺序有讲究：规则 → 更早对话摘要 → 关于用户的记忆 → 本轮检索材料。
+
+    材料放最后，因为它离用户这句话最近，模型注意力最集中；
+    记忆放在材料前面，是"背景设定"——它告诉模型该怎么读这些材料。
+    """
     parts = [system.strip()]
     if summary_block:
         parts.append(summary_block)
+    if memory_block:
+        parts.append(memory_block)
     if retrieval_block:
         parts.append(retrieval_block)
     return "\n\n".join(p for p in parts if p)
@@ -76,7 +86,8 @@ def _drop_oldest_soft(kept: list[dict]) -> list[dict] | None:
 
 def assemble(session_id: str | None, system: str, user_msg: str, history: list[dict],
              budget: Budget | None = None, recent_turns: int | None = None,
-             use_retrieval: bool = True, persist: bool = True) -> CtxResult:
+             use_retrieval: bool = True, persist: bool = True,
+             use_memory: bool = True) -> CtxResult:
     """装配一次请求。永不抛异常（降级到底也要能发出请求）。
 
     CHAIN span 只做观测外壳：预算占用、丢了几条、降级到哪一级——
@@ -86,7 +97,7 @@ def assemble(session_id: str | None, system: str, user_msg: str, history: list[d
     with tr.span("chain.assemble", tr.KIND_CHAIN,
                  {"chain.session_id": session_id or ""}) as s:
         res = _assemble_inner(session_id, system, user_msg, history, budget,
-                              recent_turns, use_retrieval, persist)
+                              recent_turns, use_retrieval, persist, use_memory)
         if s is not None:
             st = res.stats
             s.set_attribute("chain.total_tokens", st["total"])
@@ -95,6 +106,7 @@ def assemble(session_id: str | None, system: str, user_msg: str, history: list[d
             s.set_attribute("chain.dropped", st["dropped"])
             s.set_attribute("chain.anchored", st["anchored"])
             s.set_attribute("chain.retrieved_n", st["retrieved_n"])
+            s.set_attribute("chain.memory_n", st["memory_n"])
             s.set_attribute("chain.degraded", ",".join(st["degraded"]) or "-")
             s.set_attribute("chain.fallback", st["fallback"] or "-")
         return res
@@ -102,7 +114,8 @@ def assemble(session_id: str | None, system: str, user_msg: str, history: list[d
 
 def _assemble_inner(session_id: str | None, system: str, user_msg: str, history: list[dict],
                     budget: Budget | None = None, recent_turns: int | None = None,
-                    use_retrieval: bool = True, persist: bool = True) -> CtxResult:
+                    use_retrieval: bool = True, persist: bool = True,
+                    use_memory: bool = True) -> CtxResult:
     budget = budget or default_budget()
     recent_turns = recent_turns if recent_turns is not None else config.CTX_RECENT_TURNS
     degraded: list[str] = []
@@ -135,8 +148,17 @@ def _assemble_inner(session_id: str | None, system: str, user_msg: str, history:
         hits = memory_retriever.retrieve(user_msg, session_id, max_tokens=budget.alloc("retrieval"))
     retrieval_block = memory_retriever.format_for_prompt(hits)
 
+    # 3.5) 长期记忆：关于用户的既有事实/偏好。检索挂了不能阻断对话。
+    memory_block, memory_hits = "", 0
+    if use_memory and user_msg:
+        try:
+            memory_block, memory_hits = memory_manager.prompt_block(
+                user_msg, session_id=session_id, max_tokens=budget.alloc("memory"))
+        except Exception as e:  # noqa: BLE001  记忆层是新加的，任何异常都不该让主链路挂掉
+            degraded.append(f"memory_unavailable:{type(e).__name__}")
+
     def build():
-        sys_text = _join_system(system, summary_block, retrieval_block)
+        sys_text = _join_system(system, summary_block, memory_block, retrieval_block)
         # 只给 API 认识的字段：历史里带着 id 是为了"被摘要覆盖"判定，不能透传给模型
         msgs = [{"role": "system", "content": sys_text}] + [
             {"role": m.get("role") or "user", "content": m.get("content") or ""} for m in sel.kept]
@@ -147,10 +169,16 @@ def _assemble_inner(session_id: str | None, system: str, user_msg: str, history:
     messages, sys_text = build()
     total = count_messages(messages)
 
-    # 4) 降级：检索 → 摘要 → 最旧轮次
+    # 4) 降级：检索 → 记忆 → 摘要 → 最旧轮次
     if total > budget.usable and retrieval_block:
         degraded.append("drop_retrieval")
         retrieval_block, hits = "", []
+        messages, sys_text = build()
+        total = count_messages(messages)
+
+    if total > budget.usable and memory_block:
+        degraded.append("drop_memory")
+        memory_block, memory_hits = "", 0
         messages, sys_text = build()
         total = count_messages(messages)
 
@@ -189,6 +217,7 @@ def _assemble_inner(session_id: str | None, system: str, user_msg: str, history:
     sections = {
         "system": count_tokens(system),
         "summary": count_tokens(summary_block),
+        "memory": count_tokens(memory_block),
         "retrieval": count_tokens(retrieval_block),
         "history": count_messages(sel.kept),
         "user": user_tokens,
@@ -197,12 +226,19 @@ def _assemble_inner(session_id: str | None, system: str, user_msg: str, history:
         "version": CTX_VERSION, "sections": sections, "total": total,
         "budget": budget.usable, "dropped": len(sel.dropped), "anchored": sel.anchored,
         "summary_used": bool(summary_block), "summary_id": summary_row["id"] if summary_row else None,
-        "retrieved_n": len(hits), "degraded": degraded, "fallback": fallback,
+        "retrieved_n": len(hits), "memory_n": memory_hits,
+        # 命中了哪几条、分数多少、走的是哪条召回腿。
+        # 只记数量（retrieved_n=3）回答不了"哪张卡被检索到却从没被引用"——
+        # 那才是决定该改哪张卡、该删哪条记忆的依据。存压缩形式，不存正文。
+        "hit_ids": [{"k": h.get("kind"), "i": str(h.get("id")),
+                     "s": round(float(h.get("score") or 0), 4),
+                     "l": "".join(h.get("legs") or [])} for h in hits[:20]],
+        "degraded": degraded, "fallback": fallback,
         "usage_pct": round(100 * total / max(1, budget.usable), 1),
     }
     log_ctx(session=session_id, total=total, budget=budget.usable, pct=stats["usage_pct"],
             hist=len(sel.kept), dropped=len(sel.dropped), anchored=sel.anchored,
-            summary=1 if summary_block else 0, retrieved=len(hits),
+            summary=1 if summary_block else 0, retrieved=len(hits), memory=memory_hits,
             degraded=",".join(degraded) or "-", fallback=fallback)
 
     if persist:
@@ -264,11 +300,12 @@ def _persist(session_id: str | None, stats: dict) -> None:
                             (session_id,)).fetchone()["n"] or 0) + 1
         conn.execute(
             "INSERT INTO ctx_traces (session_id,seq,budget,total_tokens,sections_json,"
-            "dropped_msgs,anchored,summary_id,retrieved_n,degraded_json,fallback,created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "dropped_msgs,anchored,summary_id,retrieved_n,memory_n,degraded_json,fallback,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (session_id, seq, stats["budget"], stats["total"],
              json.dumps(stats["sections"], ensure_ascii=False), stats["dropped"],
              stats["anchored"], stats.get("summary_id"), stats["retrieved_n"],
+             stats.get("memory_n", 0),
              json.dumps(stats["degraded"], ensure_ascii=False), stats["fallback"], _now()))
         conn.commit()
     except Exception as e:  # noqa: BLE001  记账失败不能影响对话

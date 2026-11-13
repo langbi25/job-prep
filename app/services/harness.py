@@ -363,7 +363,7 @@ def _run_study_plan_agent(direction: str, max_iters: int = 6, toolbox=None) -> d
                                 "input.value": json.dumps(args, ensure_ascii=False)}) as s:
                             result_str = box.call(name, args)
                             if s is not None:
-                                s.set_attribute("output.value", result_str[:1000])
+                                s.set_attribute("output.value", result_str)
                     except Exception as e:  # noqa: BLE001
                         args, result_str = {}, f"工具执行失败: {e}"
                     steps.append({"iter": i, "tool": name, "args": args,

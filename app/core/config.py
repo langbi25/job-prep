@@ -28,6 +28,19 @@ LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
 
 APP_PORT = int(os.getenv("APP_PORT", "8765"))
 
+# ---- API 鉴权 + 审计（app/core/guard.py）----
+# 静态 token，拦 /api/*；空 = 关闭（本地脚本/测试零开销，行为与之前完全一致）。
+# 放行 /health（容器 healthcheck）、前端静态页、/docs——页面没有数据，数据都在 /api 后面。
+# 多端如何带 token：浏览器（前端自动）、curl/脚本用 X-API-Token 或 Authorization: Bearer。
+# MCP 不走这里：stdio 靠进程边界免鉴权，HTTP 侧沿用它自己的 MCP_TOKEN。
+APP_TOKEN = os.getenv("APP_TOKEN", "").strip()
+# 收紧 CORS：前端与后端同源（8765），开发时 vite 5173 经 proxy 也不跨源；
+# 列白名单只为以后万一有别的页面直连 API 的场景，不再允许任意来源。
+CORS_ORIGINS = [o.strip() for o in os.getenv(
+    "CORS_ORIGINS",
+    "http://127.0.0.1:8765,http://localhost:8765,http://127.0.0.1:5173,http://localhost:5173"
+).split(",") if o.strip()]
+
 # ---- harness 的工具来源 ----
 # local：进程内直调 _IMPL（默认，快，评测/批量跑用）
 # mcp  ：走 MCP stdio（tools/list + tools/call，和 Claude Desktop 完全同一条路径）
@@ -51,6 +64,23 @@ CTX_OUTPUT_RESERVE = int(os.getenv("CTX_OUTPUT_RESERVE", "1024"))
 CTX_SAFETY = int(os.getenv("CTX_SAFETY", "512"))
 CTX_RECENT_TURNS = int(os.getenv("CTX_RECENT_TURNS", "6"))   # 最近 N 轮永久保留
 CTX_RETRIEVE_TOPK = int(os.getenv("CTX_RETRIEVE_TOPK", "3"))
+
+# ---- 长期记忆（app/memory）----
+# 抽取每轮多一次小 LLM 调用（异步，不阻塞响应）。批跑评测/测试时关掉，省 token 也省不确定性。
+MEMORY_EXTRACT = os.getenv("MEMORY_EXTRACT", "1") != "0"
+MEMORY_RECALL_TOPK = int(os.getenv("MEMORY_RECALL_TOPK", "6"))
+# 记忆召回的向量通道：auto = 装了 fastembed 就用（模型下载失败自动降级到纯词面）；
+# 1 = 强制开（不可用也尝试，失败降级）；0 = 关（评测/离线环境，省掉一次 embedding）。
+MEMORY_VECTOR = os.getenv("MEMORY_VECTOR", "auto").strip().lower()
+
+# ---- 成本与并发闸门（app/core/budget.py）----
+# 日预算：当天 llm_usage 折算总额的硬上限。0 = 不限。
+# 默认给 5 元：个人复习场景一天 100 轮对话约 1 元，5 元足够宽裕；但一旦出现
+# "编排里某步循环重试""批量建卡跑飞"这类事故，它能在变成几十块之前截住。
+LLM_DAILY_BUDGET_CNY = float(os.getenv("LLM_DAILY_BUDGET_CNY", "5"))
+# 同时进行的重任务数（对话轮 / 批量建卡 / 编排步骤）。2C2G 单机上这是硬约束：
+# 每个任务一个线程 + 一个 SQLite 连接 + 一个在飞的 LLM 请求，超了就是互相拖慢。
+MAX_CONCURRENT_TASKS = int(os.getenv("MAX_CONCURRENT_TASKS", "3"))
 
 
 def ensure_dirs():

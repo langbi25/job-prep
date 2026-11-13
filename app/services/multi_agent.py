@@ -12,7 +12,7 @@ import datetime
 import json
 import random
 
-from ..core import llm, prompts
+from ..core import budget, llm, prompts
 from ..core.db import get_conn
 from . import kb_service
 
@@ -72,8 +72,10 @@ def draft_remediation(session_id: str) -> dict:
     return {"session_id": session_id, "persona": persona, "actions": created}
 
 
+@budget.guarded("draft_cards")
 def draft_cards(question_ids: list[str] | None = None, limit: int = 3,
-                only_uncarded: bool = True, low_risk: bool = False) -> dict:
+                only_uncarded: bool = True, low_risk: bool = False,
+                topic: str | None = None, on_event=None) -> dict:
     """为题目池里的题起草知识卡（LLM），产出 pending 的 create_card 动作，人工审批后落库。
 
     设计要点：
@@ -81,14 +83,35 @@ def draft_cards(question_ids: list[str] | None = None, limit: int = 3,
       所以一律走 HITL——草稿进审批中心，人确认后才成为事实源；
     - 同一道题已有 pending 草稿时跳过，避免重复烧 token；
     - 校验 points 数量与长度，把"要注意性能"这类空话挡在门外。
+    - **topic 过滤是必需的，不是可选优化**：没有它的时候，「给实时数仓补卡」只能按
+      全池频次取前 50，抓到的是别的主题的高频题（实测起草出「归因引擎」「跨层证据」）。
+      模型自己发现了不对并提示用户不要批准——但真实用户很可能批量通过。
 
     low_risk=True 走的是**另一条 prompt**（card_from_answer）：题目池里已经有面经原文抽出的
     答案时，只做结构化与措辞规范化，禁止补充原文没有的技术点。这类草稿 payload 带
     `low_risk=True`，审批页允许勾选批量通过——但**仍然过审批**：answer_points 会被
     context_builder 塞进模拟面试的评分上下文，错一条污染的是整轮打分。
+
+    on_event(ev)：逐卡进度回调。起因是"确认入库后自动起草"跑在后台，用户只看到
+    一句「约 1 分钟后去审批中心看」——中途失败还是建成了几张，全靠猜。事件：
+    draft_start(i,n,question) / draft_end(i,n,ok,title,error) / done(drafted,failed)。
+    回调异常一律吞掉——进度是观察者，不能因为它把已经起草好的卡丢掉。
     """
     from ..core import llm, prompts
+    from ..observability import tracing as tr
     from . import coverage_service
+
+    # 每张卡一次 LLM 调用，一次批量就是 3 笔。不设 scene 的话这笔钱在台账里
+    # 归到 unknown，"建卡贵不贵"永远算不清（它是按次计费里最容易被忽略的一档）。
+    tr.set_scene("card_draft")
+
+    def _emit(ev: dict) -> None:
+        if on_event is None:
+            return
+        try:
+            on_event(ev)
+        except Exception:  # noqa: BLE001
+            pass
 
     conn = get_conn()
     try:
@@ -97,12 +120,27 @@ def draft_cards(question_ids: list[str] | None = None, limit: int = 3,
             rows = conn.execute(
                 f"SELECT * FROM question_pool WHERE id IN ({marks}) AND merged_into IS NULL",
                 question_ids).fetchall()
+        elif topic:
+            # 双向包含：题目 topic 可能比用户说的长（"实时数仓架构" vs "实时数仓"），
+            # 也可能比用户说的短。只做单向 LIKE 会漏掉一半。
+            rows = conn.execute(
+                "SELECT * FROM question_pool WHERE merged_into IS NULL "
+                "AND (topic = ? OR topic LIKE ? OR ? LIKE '%' || topic || '%') "
+                "ORDER BY freq_count DESC, last_seen_at DESC LIMIT 50",
+                (topic, f"%{topic}%", topic)).fetchall()
         else:
             rows = conn.execute(
                 "SELECT * FROM question_pool WHERE merged_into IS NULL "
                 "ORDER BY freq_count DESC, last_seen_at DESC LIMIT 50").fetchall()
         if not rows:
-            raise ValueError("题目不存在")
+            # 明确说"这个主题没有题"，绝不退化成全池——那正是抓错主题的来源。
+            if question_ids:
+                raise ValueError(f"题目 id 不存在：{question_ids}，先用 get_top_questions 查真实 id")
+            if topic:
+                msg = f"题池里没有主题为「{topic}」的题，先采集相关面经"
+                _emit({"type": "done", "inserted": 0, "failed": 0, "skipped": msg})
+                return {"drafted": [], "inserted": 0, "failed": [], "skipped": msg}
+            raise ValueError("题目池为空")
 
         pending_qids = set()
         for a in conn.execute("SELECT payload_json FROM agent_actions WHERE kind='create_card' AND status='pending'"):
@@ -123,7 +161,9 @@ def draft_cards(question_ids: list[str] | None = None, limit: int = 3,
             if len(todo) >= limit:
                 break
         if not todo:
-            return {"drafted": [], "skipped": "没有待建卡的题（可能都已有卡或已有草稿）"}
+            msg = "没有待建卡的题（可能都已有卡或已有草稿）"
+            _emit({"type": "done", "inserted": 0, "failed": 0, "skipped": msg})
+            return {"drafted": [], "skipped": msg}
 
         card_rows = conn.execute(
             "SELECT title, topic FROM kb_cards WHERE status='active' ORDER BY updated_at DESC LIMIT 40").fetchall()
@@ -132,7 +172,10 @@ def draft_cards(question_ids: list[str] | None = None, limit: int = 3,
         conn.close()
 
     created, failed = [], []
-    for q in todo:
+    total = len(todo)
+    for idx, q in enumerate(todo, 1):
+        _emit({"type": "draft_start", "i": idx, "n": total, "question_id": q["id"],
+               "question": (q["text"] or "")[:120]})
         # 有原文答案 → 走"规范化"分支（内容不是我编的）；否则从零起草
         answer = ""
         if low_risk:
@@ -160,6 +203,8 @@ def draft_cards(question_ids: list[str] | None = None, limit: int = 3,
             data = llm.chat_parsed(system, user)
         except Exception as e:  # noqa: BLE001
             failed.append({"question_id": q["id"], "error": str(e)[:200]})
+            _emit({"type": "draft_end", "i": idx, "n": total, "ok": False,
+                   "question_id": q["id"], "error": str(e)[:160]})
             continue
 
         points = [str(p).strip() for p in (data.get("points") or []) if str(p).strip()]
@@ -169,6 +214,8 @@ def draft_cards(question_ids: list[str] | None = None, limit: int = 3,
         min_points = 1 if from_answer else 3
         if len(points) < min_points:
             failed.append({"question_id": q["id"], "error": f"要点不足（{len(points)} 条）"})
+            _emit({"type": "draft_end", "i": idx, "n": total, "ok": False,
+                   "question_id": q["id"], "error": f"要点不足（{len(points)} 条）"})
             continue
 
         payload = {
@@ -202,8 +249,14 @@ def draft_cards(question_ids: list[str] | None = None, limit: int = 3,
         created.append({"action_id": aid, "question_id": q["id"], "title": payload["title"],
                         "points": len(points), "topic": payload["topic"],
                         "low_risk": from_answer})
+        _emit({"type": "draft_end", "i": idx, "n": total, "ok": True,
+               "question_id": q["id"], "action_id": aid,
+               "title": payload["title"], "points": len(points)})
 
-    return {"drafted": created, "failed": failed, "inserted": len(created)}
+    res = {"drafted": created, "failed": failed, "inserted": len(created)}
+    _emit({"type": "done", "inserted": len(created), "failed": len(failed),
+           "actions": [c["action_id"] for c in created]})
+    return res
 
 
 def draft_card_content(card_ids: list[str] | None = None, limit: int = 3) -> dict:
@@ -214,6 +267,8 @@ def draft_card_content(card_ids: list[str] | None = None, limit: int = 3) -> dic
     只能原地补内容，所以动作类型是 fill_card 且 decide 时走 update_card_content。
     """
     from ..core import llm, prompts
+    from ..observability import tracing as tr
+    tr.set_scene("card_fill")
 
     conn = get_conn()
     try:
