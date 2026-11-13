@@ -22,9 +22,9 @@
 {
   "mcpServers": {
     "job-prep": {
-      "command": "C:/Users/14096/.workbuddy/binaries/python/envs/default/Scripts/python.exe",
+      "command": "E:/WorkBuddy/2026-10-25-22-38-23/job-prep/.venv/Scripts/python.exe",
       "args": ["-m", "app.mcp.server"],
-      "cwd": "C:/Users/14096/WorkBuddy/2026-10-25-22-38-23/job-prep"
+      "cwd": "E:/WorkBuddy/2026-10-25-22-38-23/job-prep"
     }
   }
 }
