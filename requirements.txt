@@ -15,5 +15,11 @@ numpy
 mcp>=2.3.0
 opentelemetry-sdk>=1.45
 opentelemetry-exporter-otlp-proto-http>=1.45
+# LLM 网关（docker-compose 的 litellm 服务用，见 docs/LiteLLM网关.md）。
+# 不用 ghcr 官方镜像：国内拉不动（token/manifest 可达但层下载停滞），
+# 装进应用镜像走 pip 阿里云源，同一个镜像两个用途（api + 网关）。
+# proxy extra 必须带：proxy 入口还依赖 orjson/pyjwt 等一串额外包，
+# 只装裸包起不来（踩过：Missing dependency No module named 'orjson'）
+litellm[proxy]>=1.74
 # Trace 后端（可选，本地跑 UI 时单独装）：pip install arize-phoenix
 # Langfuse（Docker compose）：见 docs/Trace采集.md

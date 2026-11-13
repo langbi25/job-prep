@@ -1,0 +1,36 @@
+# LiteLLM 网关配置（见 docker-compose.yml 的 litellm 服务）。
+#
+# 为什么用代理而不是 LiteLLM SDK：应用层（app/core/llm.py）已经是一套完整的
+# OpenAI 协议客户端（流式 TTFT、tool_calls 聚合、并发池、预算闸门、成本台账），
+# 换 SDK 等于全部重写，还丢掉自定义的错误语义。网关只做一件事——把 OpenAI
+# 协议翻译给各个上游，应用零改动；将来换模型/加供应商/做 fallback 全是改这份
+# YAML 的事，不用碰代码。
+#
+# 注意职责边界：**记账不外移**。成本台账、日预算、并发池仍在应用本地
+# （pricing.py / budget.py / llm.py 的池）——这是"记账不例外"原则的延续：
+# 网关的 spend tracking 依赖数据库（Postgres），2C2G 单机不再背一个库，
+# 而且台账必须和 span/评测/归因在同一张表里才查得动。
+
+model_list:
+  # model_name 是应用请求体里填的名字（config.LLM_MODEL）。
+  # litellm_params.model 是网关真正发给上游的 provider 前缀写法。
+  - model_name: deepseek-chat
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+  # 推理模型先挂上清单但应用默认不用：切换 = 改 .env 的 LLM_MODEL，
+  # 应用代码不动。硬题（编排打分、归因）以后值得单独路由到它。
+  - model_name: deepseek-reasoner
+    litellm_params:
+      model: deepseek/deepseek-reasoner
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+litellm_settings:
+  # 网关层重试：只兜网络抖动和 429/5xx。语义错误（400）透传给应用——
+  # 应用侧 LLMError 的 retryable 判定建立在"同一 body 重试没意义"上，
+  # 网关层乱重试会把一次必败请求变成三次必败请求，账单和延迟一起翻倍。
+  num_retries: 2
+  request_timeout: 90   # 与应用侧 httpx timeout 对齐，别让网关比客户端先放弃
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

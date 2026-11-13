@@ -12,6 +12,14 @@ services:
       TZ: Asia/Shanghai
       BACKUP_DIR: /backup
       BACKUP_KEEP: "7"
+      # LLM 走网关：容器内用 compose 服务名（127.0.0.1 指容器自己，不通）。
+      # .env 里留的是宿主视角地址（127.0.0.1:4000），本地 uvicorn 直跑也能连网关。
+      LLM_BASE_URL: http://litellm:4000/v1
+    # 网关没就绪就起 api，首批 LLM 调用会集体失败再靠重试救——
+    # 不如等 healthcheck 通过。网关挂了 api 起不来是网关模式的既定语义。
+    depends_on:
+      litellm:
+        condition: service_healthy
     ports:
       - "8765:8765"
     volumes:
@@ -83,6 +91,11 @@ services:
     environment:
       TZ: Asia/Shanghai
       HF_ENDPOINT: https://hf-mirror.com
+      # 与 api 一致：MCP sidecar 里的 LLM 调用（未来的扩展工具）也走网关
+      LLM_BASE_URL: http://litellm:4000/v1
+    depends_on:
+      litellm:
+        condition: service_healthy
     ports:
       # 只绑宿主的 127.0.0.1：端口映射仅服务本机的 MCP 客户端，外部网络看不到。
       # 要跨机接入就改成 "8766:8766"，但那时 MCP_TOKEN 必须是长随机串。
@@ -111,6 +124,41 @@ services:
     networks:
       - default
       - obs   # 与 api 一致：MCP 的工具调用也要能导出 span
+
+  # LLM 网关（LiteLLM）：所有 LLM 调用的统一出口。应用层说的本来就是标准
+  # OpenAI 协议，指向网关即可零改动切换；换模型/加供应商/做 fallback 全是改
+  # litellm/config.yaml 的事。**记账不外移**：成本台账、日预算、并发池仍在
+  # 应用本地（pricing.py / budget.py / llm.py），网关只做协议路由。
+  # 默认启动（api/mcp 都依赖它）；不需要时删掉本段并撤掉 api/mcp 的
+  # depends_on + LLM_BASE_URL 覆盖，.env 改回 DeepSeek 直连即可回退。
+  litellm:
+    # 与 api 同镜像（requirements.txt 里装了 litellm 包）。不用 ghcr 官方镜像：
+    # 国内拉不动，pip 阿里云源稳定；代价是镜像大 ~300MB，2C2G 上可接受。
+    build: .
+    image: job-prep-api:latest
+    command: ["litellm", "--config", "/app/litellm/config.yaml", "--port", "4000"]
+    environment:
+      TZ: Asia/Shanghai
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?请在 .env 设置 LITELLM_MASTER_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?请在 .env 设置 DEEPSEEK_API_KEY}
+    volumes:
+      # 配置单独挂载：改模型清单不用重建镜像，restart 即生效
+      - ./litellm/config.yaml:/app/litellm/config.yaml:ro
+    ports:
+      # 宿主只留本机回环口：本地 uvicorn 直跑时也能连网关（.env 的 LLM_BASE_URL）。
+      # 应用容器走 compose 内部网络，不经过这个映射。
+      - "127.0.0.1:4000:4000"
+    healthcheck:
+      # /health/liveliness 不需要鉴权，专给探活用
+      test: ["CMD", "python", "-c", "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness',timeout=3).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "2" }
+    restart: unless-stopped
 
 
 networks:
