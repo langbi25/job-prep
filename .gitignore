@@ -1,5 +1,5 @@
 .env
-deploy/.env.langfuse
+deploy/**/.env.langfuse
 data/kb.sqlite
 data/app.db
 data/job_prep.sqlite3

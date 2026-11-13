@@ -4,6 +4,10 @@
 
 LLM 走云端 API 的前提下，2核2G 够跑（内存预算 ~1.2-1.4G）。必须做三件事：**加 2G swap、embedding 用 small 模型、不引入数据库服务**。
 
+> **可观测后端不在这 2G 预算里**。Langfuse 需要 6-8G，必须和业务分机部署
+> （本机 Docker，或升级到 8G 的独立实例）；Phoenix 单机 pip 起，占用小，可与业务同机。
+> 详见 [docs/Langfuse接入.md](../docs/Langfuse接入.md) 第 1 节实测对比，一键脚本 `deploy/langfuse-up.sh`。
+
 ## 方式一：Docker Compose（推荐）
 
 ```bash
