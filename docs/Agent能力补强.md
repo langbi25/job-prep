@@ -1332,3 +1332,77 @@ prompt——12 条任务会跑成 12 次同样的调用，评测的是"模型是
 - `pytest tests/ -q` → **329 passed**（+25：并发池 6、告警 11、进料 8）；
 - 任务级基线 12/12；`npm run build` 未动前端。
 - 配置默认全部关闭（webhook 未配 / EVAL_INTAKE 默认开但进料失败自吞），本地与 CI 零行为差异。
+
+## 十四、Agent 网关：单向变双向（2026-11-14 凌晨）
+
+上一轮盘出的差距里，"工具网关"这项有三处没做完：清单三份、HTTP 没进部署、只当 server。
+这次一次收掉。
+
+### 14.1 统一注册表：`app/mcp/registry.py`
+
+此前同一批能力有三份手写清单：
+
+| 清单 | 数量 | 用途 |
+|---|---|---|
+| `harness.TOOLS` | 6 | 内置循环的读工具 |
+| `agent_tools.SCHEMAS` | 11 | 内置循环的动作工具 |
+| `gateway.SPECS` | 9 | 对外 MCP，摘要又写了一遍 |
+
+三份各自维护描述，改一个工具要同步三处。现在 `REGISTRY` 登记 18 个工具，每条带
+`surfaces`，两个出口各自过滤：`agent` 17 个、`mcp` 9 个（`get_card` 只对外，
+它是"按 id 下钻全文"，服务外部宿主"先 search 再点进去"的习惯）。
+
+四处变量（含 `tools.REGISTERED`，第四份）全部改为派生，删掉约 200 行重复 schema。
+注册表**只存元数据不存 handler**，避免 registry → harness → registry 循环导入；
+handler 绑定失败在**导入期**抛错，不等模型调用时返回 unknown_tool。
+
+顺带修出两个真 bug：
+
+- `draft_cards` 的 MCP 签名层**少了 `topic`**。工具描述里明确写着"用户说给 XX 补卡时必须传
+  topic，否则会从全池抓题、补错主题"，但外部客户端根本传不进来。文档与实现差了一个参数。
+- `get_weak_topics.direction`、`ingest_text.source_type` 的枚举没进 inputSchema，
+  客户端看不到取值约束，只能瞎填。
+
+`tests/test_tool_registry.py` 11 条把这几层钉住，包括"pydantic 生成的 inputSchema 与注册表
+逐项相同"——上面那个 topic bug 正是这条断言会立刻抓到的东西。
+
+### 14.2 MCP HTTP 进部署
+
+`docker-compose` 加可选 `mcp` 服务：`profiles: ["mcp"]` 默认不启动，
+`127.0.0.1:8766` 只服务本机客户端，token 从 `.env` 的 `MCP_TOKEN` 注入
+（缺失时 server.py 主动退出，`restart: on-failure:3` 不无限刷）。
+
+它是**第二个写进程**（与 api 共用 `jobprep_data`）。这一点专门验过：两进程各写 40 次、
+共 80 次提交 0 冲突——`sqlite3.connect` 默认 `timeout=5s` 就是 busy timeout，
+WAL 下多写者串行够用。B 计划是降级成只读，目前不需要。
+
+### 14.3 双向：接外部 server（`app/mcp/external.py`）
+
+内置 Agent 现在能调第三方 MCP server。五条约束：默认关闭（无配置文件=零连接）、
+白名单优先（不写 `allow` 等于不暴露，不是全开）、失败隔离 + 懒加载、记账不例外
+（`client=ext:<server>`）、**不做级联**（外部工具不进我们对外暴露的清单——
+我们的 token 管得住自己 9 个工具，管不住别人的能力，转发等于替第三方背书）。
+
+对端用 `scripts/demo_mcp_server.py`（真 stdio 协议，不是 mock），验了参数原样、
+零参工具、异常变可读文本、坏 server 不牵连好 server。
+
+踩到的三个坑：
+
+- 配置写 `"python"` 拿到的是系统解释器（没装 mcp/pydantic），子进程直接
+  `ModuleNotFoundError`。现在 `python`/`python3`/`py` 翻译成 `sys.executable`。
+- 握手失败时 `SyncMCPToolbox` 会漏后台线程 + 事件循环，并打印
+  "Task exception was never retrieved" 的噪音把真正错误埋掉。现在 `__init__` 在
+  `ready.result()` 抛异常时先 `close()` 再抛。
+- 试过给外部 server 的 stderr 加前缀做隔离，**做不到**：SDK 的 `errlog` 最终走
+  `anyio.open_process(stderr=errlog)`，要文件描述符，TextIO 包装器的 `fileno()`
+  被转发到父进程 fd 2。已删除这段死代码，改为在文档里说明"靠路径区分归属"——
+  留一个看起来生效但实际没生效的隔离，比没有更糟。
+
+### 14.4 验收
+
+- `pytest tests/ -q` → **347 passed**（340 → +7 外部接入）；
+- `tests/test_tool_registry.py` 11 条；`tests/test_external.py` 7 条（含真协议往返）；
+- 容器：`job-prep-mcp-1 Up (healthy)`，`127.0.0.1:8766->8766`；
+  实测 401 拦截 / 握手 / tools/list 9 个 / tools/call 真实数据 / 写工具落审批队列；
+- 外部工具进 Agent 工具集：17 + 3 = 20（配 demo server 时），lint 认识这些名字；
+- 顺手修了 `test_dispatch` 的 flaky 并发断言（阈值离串行耗时太近，3 次里错 1 次）。

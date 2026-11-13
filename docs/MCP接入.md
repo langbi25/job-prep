@@ -193,7 +193,59 @@ enter/exit 在同一任务，跨任务退出会抛 `Attempted to exit cancel sco
 - 验证协议 / 演示「任何客户端都能接」→ 走 MCP（和 Claude Desktop 完全同一条路径）。
 - 生产只保留一个入口，别让同一个循环同时维护两套工具来源——那是分叉的开始。
 
-## 6. 已知限制
+## 6. 反方向：把别人的 server 接进来
+
+前面五节都是"我们当 server"。`app/mcp/external.py` 补上另一半：内置 Agent 也能调
+第三方 MCP server 的工具。
+
+```bash
+cp mcp_servers.example.json mcp_servers.json   # 改成本机路径
+```
+
+```json
+{
+  "servers": {
+    "fs": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "E:/WorkBuddy"],
+      "allow": ["read_file", "list_directory"],
+      "read_only": ["read_file", "list_directory"]
+    }
+  }
+}
+```
+
+模型看到的工具名是 `fs__read_file`（双下划线：OpenAI function name 不允许点号）。
+
+**五条设计约束**，都是围绕"第三方代码不可信"：
+
+1. **默认关闭**。`mcp_servers.json` 不存在就是空配置——不连接、不耗时。做成"发现了就自动接"，
+   等于让一个文件的存在本身成为权限授予。
+2. **白名单优先**。`allow` 必须显式列出，**不写等于不暴露**（不是全开）。外部工具能干什么我们
+   无从判断，默认全开就是把未审计的入口塞进模型的工具列表。要全开得手写 `["*"]`。
+3. **失败隔离 + 懒加载**。真正用到时才连接；连不上就把该 server 标记不可用并跳过，
+   不让一个起不来的第三方进程拖住 Agent 主流程。失败后本进程内不再重试——
+   否则每次对话都卡在同一个坏 server 上。
+4. **记账不例外**。调用落 `mcp_calls`，`client=ext:<server>`，和本地工具同一张表。
+   否则"外部工具被调了多少次、失败几次"永远查不清。
+5. **不做级联**。外部工具不会出现在我们对外暴露的 `tools/list` 里。级联转发看着更像"网关"，
+   但责任边界会糊掉：我们的 token 只管得住自己的 9 个工具，管不住别人 server 的能力，
+   转发出去等于用我们的鉴权替第三方背书。
+
+**自检**：`scripts/demo_mcp_server.py` 是最小对端（`echo` / `now` / `explode`），
+配上去调一次就能确认链路通（含参数原样、零参工具、异常变文本）。
+
+**已知限制**（实测踩到的）：
+
+- 外部 server 的 stderr 直接进我们的日志，**无法加前缀**——MCP SDK 的
+  `stdio_client(errlog=...)` 最终走 `anyio.open_process(stderr=errlog)`，要的是文件描述符，
+  传 TextIO 包装器时 `fileno()` 会被转发到父进程的 fd 2，等于没包。排障靠路径区分归属。
+- 配置里写 `"python"` 会被翻译成当前解释器（`sys.executable`）：PATH 里的 python 通常没装
+  mcp/pydantic，直接用会 `ModuleNotFoundError`。其它命令（npx/node/uvx）原样透传。
+- 外部写工具**没有审批闸门**：本地写工具产出的是待审批动作，第三方工具是直接执行的。
+  所以 `allow` 里放写工具要自己承担后果——这也是白名单默认关闭的主要原因。
+
+## 7. 已知限制
 
 - 单用户单库：没有多租户和行级权限，HTTP 只做了 Bearer 校验；
 - 没有实现 resource 订阅与 progress 通知，长任务（如 `ingest_text`）是同步返回；
