@@ -5,11 +5,15 @@ rem 前端已改成 Vue3：FastAPI 直接托管 frontend/dist，页面和接口�
 rem 旧的 Streamlit（8501）只作为备用界面保留，日常不用启动。
 cd /d %~dp0
 
-set "PY=C:\Users\14096\.workbuddy\binaries\python\envs\default\Scripts\python.exe"
+rem 优先用项目自带的 .venv：依赖都装在里面，换机器/换盘符只要把目录整体搬走就行。
+rem 回退到 WorkBuddy 的默认环境，只为了在 .venv 没建好时还能启动看一眼。
+set "PY=%~dp0.venv\Scripts\python.exe"
+if not exist "%PY%" set "PY=C:\Users\14096\.workbuddy\binaries\python\envs\default\Scripts\python.exe"
 
 if not exist "%PY%" (
   echo [错误] 找不到 Python：%PY%
-  echo 改一下本脚本里的 PY 变量，或先用 venv 建环境再 pip install -r requirements.txt
+  echo 先在项目目录建环境：
+  echo     python -m venv .venv ^&^& .venv\Scripts\python -m pip install -r requirements.txt
   pause
   exit /b 1
 )

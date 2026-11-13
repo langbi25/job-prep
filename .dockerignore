@@ -5,3 +5,20 @@ __pycache__/
 .venv/
 *.sqlite
 pip_streamlit.log
+
+# 下面这些进了镜像只会让层变大、构建变慢，甚至直接失败。
+# frontend/node_modules 尤其危险：15 万个文件 + Windows 长路径，
+# COPY 阶段要么卡十几分钟，要么报 "path too long" 直接中断。
+frontend/node_modules/
+.git/
+.idea/
+.pytest_cache/
+**/__pycache__/
+*.log
+uvicorn-*.log
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# frontend/dist 不排除：容器里就是靠它提供页面的，
+# 镜像不做 npm build（构建机上没 node 也不该有），产物必须在上下文里。

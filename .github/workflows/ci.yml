@@ -1,0 +1,82 @@
+name: ci
+
+# 单元测试与前端构建门禁。
+#
+# 和 evals.yml 的分工：
+#   ci.yml    —— 全量单元/集成测试 + 树搜索逻辑 + 前端能否构建。零 LLM 成本，每次 push/PR 必跑。
+#   evals.yml —— 检索快检 + 全量评测（要 LLM_API_KEY），质量趋势，跑得慢。
+# 两者都绿才算"可以发"：测试保证"改坏了能发现"，评测保证"变差了能发现"。
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true      # 连续 push 只跑最后一次
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # 测试必须与宿主时区无关：span 的 start_ts 是本地时间字符串，
+      # 换个时区跑出的断言失败过一次（UTC 容器 + 本地数据混合）。
+      TZ: Asia/Shanghai
+      HF_ENDPOINT: https://hf-mirror.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # 向量模型约 90MB，缓存后二次运行可省 30s+
+      - name: 缓存 embedding 模型
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub
+          key: hf-bge-small-zh-v1.5
+          restore-keys: hf-bge-small-zh-v1.5
+
+      - name: 安装依赖
+        run: pip install -r requirements-dev.txt
+
+      # 下载失败不致命：embedder 有降级路径（回退 FTS），
+      # 但不能让"没网"伪装成"测试通过"——降级路径本身也有测试覆盖。
+      - name: 预热向量模型（失败不阻断）
+        run: python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BAAI/bge-small-zh-v1.5')" || true
+
+      - name: 全量测试
+        run: python -m pytest tests/ -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # dist 打进镜像由 FastAPI 托管，构建失败等于发布出白屏，
+      # 所以这一步不是"锦上添花"，是发布前必须过的关。
+      - name: 安装依赖
+        run: npm ci
+        working-directory: frontend
+
+      # 树搜索的匹配规则是纯函数，用 node 直接断言（不引测试框架）。
+      # 它挡的是"搜不到折叠里的节点""把 _blob_keys 当内容搜"这类静默错误。
+      - name: 树搜索逻辑测试
+        run: npm run test:tree
+        working-directory: frontend
+
+      - name: 构建
+        run: npm run build
+        working-directory: frontend

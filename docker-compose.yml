@@ -1,14 +1,28 @@
 services:
   api:
     build: .
+    image: job-prep-api:latest
     command: uvicorn app.main:app --host 0.0.0.0 --port 8765 --workers 1
     env_file: .env
     environment:
       HF_ENDPOINT: https://hf-mirror.com
+      # 容器默认 UTC。不设这个，span 的 start_ts 会比本地早 8 小时，
+      # 混进历史数据（本地时区写入）后 trace 列表按时间排序全乱，
+      # "按天统计"也会把晚上 8 点之后的数据算到前一天。
+      TZ: Asia/Shanghai
+      BACKUP_DIR: /backup
+      BACKUP_KEEP: "7"
     ports:
       - "8765:8765"
     volumes:
-      - ./data:/app/data
+      # 数据库放 named volume 而不是 ./data 绑定挂载：
+      # WSL2 的 /mnt/e 走 9p，SQLite 的 WAL 在这种文件系统上会随机报
+      # "database is locked"，写入吞吐也掉一个数量级。代价是备份要
+      # 走 docker cp（命令见 docs/容器运行.md），不能直接拷目录。
+      # 备份落宿主目录而不是卷里：卷损坏时卷内的备份也一起没了。
+      # 目录在 E 盘，备份是低频顺序写，9p 的性能问题在这里不成立。
+      - ./backups:/backup
+      - jobprep_data:/app/data
       - ./knowledge:/app/knowledge
       - ./interviews:/app/interviews
       - ./inbox:/app/inbox
@@ -26,21 +40,37 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
     restart: unless-stopped
+    networks:
+      - default
+      - obs   # 与 deploy/langfuse 共享：容器间用服务名 langfuse-web 访问，不走宿主端口
 
-  ui:
+  # 每日备份 sidecar：与 api 同镜像，只跑备份循环。
+  # 独立成容器而不是塞进 api 的进程里——备份失败/卡住不影响在线服务，
+  # 反过来 api 频繁重启也不会把备份节奏打乱。
+  backup:
     build: .
-    command: streamlit run ui/streamlit_app.py --server.port 8501 --server.address 0.0.0.0 --server.headless true
+    image: job-prep-api:latest
+    command: python scripts/backup_loop.py
     environment:
-      JOBPREP_API: http://api:8765
-    ports:
-      - "8501:8501"
-    depends_on:
-      api:
-        condition: service_healthy
+      TZ: Asia/Shanghai
+      BACKUP_DIR: /backup
+      BACKUP_KEEP: "7"
+      BACKUP_AT_HOUR: "2"
+    volumes:
+      - ./backups:/backup
+      # 注意：必须是读写挂载。WAL 模式下即使只是读，SQLite 也要建 -shm 共享内存文件，
+      # 挂 :ro 会直接 "unable to open database file"。脚本本身只用 mode=ro 打开，
+      # 写权限仅用于 -shm/-wal 的映射。
+      - jobprep_data:/app/data
     logging:
       driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+      options: { max-size: "10m", max-file: "2" }
     restart: unless-stopped
 
+networks:
+  obs:
+    external: true
+
 volumes:
+  jobprep_data:
   model_cache:

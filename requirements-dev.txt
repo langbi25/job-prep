@@ -1,0 +1,4 @@
+# 开发/CI 依赖：运行时依赖 + 测试框架。
+# CI 与本地一致用这一份，避免"我机器上能跑"（pytest 只装在某个 venv 里）。
+-r requirements.txt
+pytest>=8.0
