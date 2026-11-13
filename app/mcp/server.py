@@ -4,7 +4,7 @@
     python -m app.mcp.server --http --port 8766   # streamable HTTP（远程，需 MCP_TOKEN）
 
 三个原语各有分工，别都塞进 tools：
-- tools：模型决定调用（8 个，读 6 写 2）；
+- tools：模型决定调用（9 个，读 6 写 3）；
 - resources：客户端预取，不耗决策（kb://card/{id}、kb://brief/today）；
 - prompts：用户显式触发（复盘、建卡）。
 

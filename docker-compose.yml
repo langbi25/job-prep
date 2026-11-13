@@ -67,6 +67,52 @@ services:
       options: { max-size: "10m", max-file: "2" }
     restart: unless-stopped
 
+  # MCP HTTP 服务（**可选**）：让 Claude Desktop / Cursor 这类外部客户端远程接入。
+  #
+  # 默认不启动——`docker compose up -d` 不会拉起它，必须显式
+  #   docker compose --profile mcp up -d
+  # 理由：多一个常驻进程就多一个故障面，而绝大多数时候只用内置对话。
+  # 启用前必须在 .env 设 MCP_TOKEN（server.py 对非本地地址强制要求，
+  # 没设会直接退出并打印原因——宁可起不来，也不要静默裸奔）。
+  mcp:
+    build: .
+    image: job-prep-api:latest
+    command: python -m app.mcp.server --http --host 0.0.0.0 --port 8766
+    profiles: ["mcp"]
+    env_file: .env
+    environment:
+      TZ: Asia/Shanghai
+      HF_ENDPOINT: https://hf-mirror.com
+    ports:
+      # 只绑宿主的 127.0.0.1：端口映射仅服务本机的 MCP 客户端，外部网络看不到。
+      # 要跨机接入就改成 "8766:8766"，但那时 MCP_TOKEN 必须是长随机串。
+      - "127.0.0.1:8766:8766"
+    volumes:
+      # 必须读写：写工具（draft_cards / ingest_text）要落库，WAL 还要建 -shm。
+      - jobprep_data:/app/data
+      - ./knowledge:/app/knowledge
+      - ./interviews:/app/interviews
+      - ./inbox:/app/inbox
+      - ./reports:/app/reports
+      - ./evals:/app/evals
+      # search_kb 走向量检索，没有这个卷会重新下载几百 MB 模型
+      - model_cache:/root/.cache/huggingface/hub
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket;socket.create_connection(('127.0.0.1',8766),2)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "2" }
+    # 不无限重启：token 缺失这类错误重启一百次也一样，让它在日志里停住更省事
+    restart: on-failure:3
+    networks:
+      - default
+      - obs   # 与 api 一致：MCP 的工具调用也要能导出 span
+
+
 networks:
   obs:
     external: true
