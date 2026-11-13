@@ -28,17 +28,25 @@ ROOT = Path(__file__).resolve().parents[2]
 class MCPToolbox:
     """stdio 连本地 MCP server，暴露 OpenAI function-calling 形状的工具清单。"""
 
-    def __init__(self, command: str | None = None, args: list[str] | None = None):
+    def __init__(self, command: str | None = None, args: list[str] | None = None,
+                 env: dict | None = None):
+        # env 用于接外部 server（app/mcp/external.py）：第三方进程可能需要自己的
+        # token / 路径变量，但必须继承当前进程环境——否则 PATH 里的 npx/node 找不到。
         self.params = StdioServerParameters(
             command=command or sys.executable,
             args=args or ["-m", "app.mcp.server"],
-            env={**os.environ, "PYTHONPATH": str(ROOT)},
+            env={**os.environ, "PYTHONPATH": str(ROOT), **(env or {})},
         )
         self._stdio = None
         self._session: ClientSession | None = None
         self._tools: list[Any] = []
 
     async def __aenter__(self) -> "MCPToolbox":
+        # 注意：子进程的 stderr 直接继承父进程，无法在这里加前缀。MCP SDK 的
+        # stdio_client(errlog=...) 最终走 anyio.open_process(stderr=errlog)，
+        # 需要的是**文件描述符**——传一个 TextIO 包装器时 fileno() 会被转发到
+        # 父进程的 fd 2，等于没包。所以外部 server 的 traceback 会原样出现在
+        # 我们的日志里，靠路径区分归属（site-packages/mcp/** = 第三方输出）。
         self._stdio = stdio_client(self.params)
         read, write = await self._stdio.__aenter__()
         self._session = ClientSession(read, write)
@@ -91,8 +99,10 @@ class SyncMCPToolbox:
       所以开一个后台线程跑常驻事件循环，生命周期协程只此一个，请求走队列进去。
     """
 
-    def __init__(self, timeout: float = 60.0):
+    def __init__(self, timeout: float = 60.0, command: str | None = None,
+                 args: list[str] | None = None, env: dict | None = None):
         self._timeout = timeout
+        self._params = {"command": command, "args": args, "env": env}
         self._loop = asyncio.new_event_loop()
         self._req: asyncio.Queue | None = None
         self._done = threading.Event()
@@ -101,13 +111,20 @@ class SyncMCPToolbox:
         self._thread.start()
         ready: concurrent.futures.Future = concurrent.futures.Future()
         asyncio.run_coroutine_threadsafe(self._serve(ready), self._loop)
-        self._tools: list[Any] = ready.result(self._timeout)
+        try:
+            self._tools: list[Any] = ready.result(self._timeout)
+        except Exception:
+            # 握手失败（外部 server 秒退、依赖缺失、命令写错）时必须把后台线程和事件循环
+            # 关掉再抛：不关的话循环一直转、子进程不收尸，还会留下
+            # "Task exception was never retrieved" 的噪音，把真正的错误埋掉。
+            self.close()
+            raise
 
     async def _serve(self, ready: concurrent.futures.Future) -> None:
         req: asyncio.Queue = asyncio.Queue()
         self._req = req
         try:
-            async with MCPToolbox() as box:
+            async with MCPToolbox(**self._params) as box:
                 ready.set_result(box.openai_tools())
                 while True:
                     item = await req.get()
@@ -160,7 +177,11 @@ class SyncMCPToolbox:
     def close(self) -> None:
         if self._req is not None:
             self._loop.call_soon_threadsafe(self._req.put_nowait, None)
-        self._done.wait(5)
+            self._done.wait(5)
+        else:
+            # 会话没建起来（_serve 在第一次 await 之前就挂了）：给它半秒收尾，
+            # 不要死等 5 秒——失败路径上每一秒都算在用户的等待时间里。
+            self._done.wait(0.5)
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout=5)
         if not self._loop.is_running():

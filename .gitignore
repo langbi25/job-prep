@@ -17,3 +17,6 @@ node_modules/
 
 # IDE
 .idea/
+
+# 外部 MCP server 配置（含本机绝对路径，不提交；样例见 mcp_servers.example.json）
+mcp_servers.json

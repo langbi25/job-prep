@@ -22,6 +22,7 @@ from pathlib import Path
 from ..core.config import BASE_DIR
 from ..core.db import get_conn
 from ..core import tool_flags
+from ..mcp import external
 from ..skills import registry
 from . import agent_tools, harness
 
@@ -42,9 +43,16 @@ ISSUE_WEIGHT = {"error": 12, "warn": 4, "info": 0}
 
 def _all_tools_raw() -> tuple[list[dict], dict]:
     """全量工具（含已停用）。面板与 lint 要用它，否则工具一停用就从列表里消失，
-    再也开不回来；lint 也会把"引用了已停用工具"错报成"引用了不存在的工具"。"""
+    再也开不回来；lint 也会把"引用了已停用工具"错报成"引用了不存在的工具"。
+
+    外部 MCP server 的工具也在这里合并：它们是**同一种东西**——模型可见、可调用的能力，
+    只是实现住在另一个进程。不合并的话，技能白名单引用外部工具会被 lint 误报为拼写错误。
+    没配 mcp_servers.json 时 external 返回空字典，不建立任何连接。
+    """
     tools = list(harness.TOOLS) + list(agent_tools.SCHEMAS)
     impl = {**harness._IMPL, **agent_tools.IMPL}
+    tools += list(external.schema_map().values())
+    impl.update(external.implementations())
     return tools, impl
 
 

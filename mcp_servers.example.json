@@ -1,0 +1,18 @@
+{
+  "_note": "复制为 mcp_servers.json 才生效（不存在 = 不接任何外部 server，零开销）。每个 server 必须写 allow 白名单，不写等于不暴露；read_only 列出哪些工具是只读的，其余按写处理。工具名会暴露为 {服务器名}__{工具名}。",
+  "_demo_hint": "demo 指向 scripts/demo_mcp_server.py，是最小自检对端（echo/now 两个只读工具）。不需要它就删掉这一项；fs 那段需要本机有 node/npx，没有就一并删掉。",
+  "servers": {
+    "demo": {
+      "command": "python",
+      "args": ["scripts/demo_mcp_server.py"],
+      "allow": ["echo", "now"],
+      "read_only": ["echo", "now"]
+    },
+    "fs": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "E:/WorkBuddy/2026-10-25-22-38-23"],
+      "allow": ["read_file", "list_directory", "search_files"],
+      "read_only": ["read_file", "list_directory", "search_files"]
+    }
+  }
+}
