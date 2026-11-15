@@ -560,14 +560,15 @@ def critique(goal: str, answer: str, steps: list[PlanStep]) -> dict:
 
 def _save(plan_id: str, *, session_id: str | None, goal: str, steps: list[PlanStep],
           status: str, result: dict, tokens: int, cost: float, duration_ms: int,
-          mode: str = "assist", resume_count: int = 0, trace_id: str = "") -> None:
+          mode: str = "assist", resume_count: int = 0, trace_id: str = "",
+          intent: str | None = None) -> None:
     try:
         conn = get_conn()
         try:
             conn.execute(
                 "INSERT OR REPLACE INTO agent_plans (id,session_id,goal,plan_json,status,"
                 "steps_json,result_json,tokens_used,cost_cny,duration_ms,mode,resume_count,"
-                "trace_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "trace_id,intent,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (plan_id, session_id, goal[:1000],
                  json.dumps([{"id": s.id, "role": s.role, "goal": s.goal,
                               "depends_on": s.depends_on} for s in steps], ensure_ascii=False),
@@ -580,7 +581,7 @@ def _save(plan_id: str, *, session_id: str | None, goal: str, steps: list[PlanSt
                               "output": s.output[:1200]} for s in steps], ensure_ascii=False),
                  json.dumps(result, ensure_ascii=False)[:20000],
                  tokens, round(cost, 6), duration_ms, mode, int(resume_count),
-                 (trace_id or None), _now(), _now()))
+                 (trace_id or None), (intent or None), _now(), _now()))
             conn.commit()
         finally:
             conn.close()
@@ -803,11 +804,15 @@ def resume(plan_id: str, *, retry: bool = True) -> dict:
                   "status": status, "stopped_by": board.stop, "trace_id": trace_id,
                   "resumed": True, "resume_count": resume_no,
                   "previous_status": prev_status,
+                  # 意图沿用首跑的落库值，不重分类：同一计划两次分类结果可能不同，
+                  # 统计口径就漂了。老计划 intent 为 NULL 保持 NULL（指标归 unknown）。
+                  "intent": row["intent"] or None,
                   "resumed_steps": [s.id for s in steps if s.id not in done_ids],
                   "skipped_done_steps": done_ids}
         _save(plan_id, session_id=session_id, goal=goal, steps=steps, status=status,
               result=result, tokens=tokens, cost=cost, duration_ms=duration_ms,
-              mode=mode, resume_count=resume_no, trace_id=trace_id)
+              mode=mode, resume_count=resume_no, trace_id=trace_id,
+              intent=row["intent"] or None)
         return result
     finally:
         lock.release()
@@ -859,6 +864,19 @@ def orchestrate(goal: str, *, session_id: str | None = None, mode: str = "assist
         # worker 线程里 run_step 走 msg["_usage"] 自记账（contextvar 不跨线程，
         # 收集器收不到它们——正好避免双算）。
         extras: list[dict] = []
+        # 意图分类放在最前：它是"这条计划为什么存在"的标签，指标页按它聚合
+        # 费用与成功率。规则命中零成本；未命中才多一次几十 token 的 LLM 调用，
+        # 挂在 agent.intent 子 span 上（trace 里能对上号），费用算进本条计划。
+        from . import intent as _intent
+        with pricing.collect() as c:
+            with tr.span("agent.intent", tr.KIND_CHAIN) as _si:
+                intent = _intent.classify(goal)
+                if _si is not None:
+                    _si.set_attribute("agent.intent", intent["intent"])
+                    _si.set_attribute("agent.intent_method", intent["method"])
+        extras += c
+        emit({"type": "intent", "intent": intent["intent"], "label": intent["label"],
+              "method": intent["method"]})
         with pricing.collect() as c:
             planned = plan(goal, max_steps=max_steps)
         extras += c
@@ -906,10 +924,11 @@ def orchestrate(goal: str, *, session_id: str | None = None, mode: str = "assist
               "warnings": planned["warnings"], "tokens": tokens,
               "cost_cny": cost, "cost_extra": extra_usage,
               "duration_ms": duration_ms, "status": status,
-              "stopped_by": board.stop, "trace_id": trace_id}
+              "stopped_by": board.stop, "trace_id": trace_id,
+              "intent": {k: intent.get(k) for k in ("intent", "label", "method")}}
     _save(plan_id, session_id=session_id, goal=goal, steps=steps, status=status,
           result=result, tokens=tokens, cost=cost, duration_ms=duration_ms,
-          mode=mode, resume_count=0, trace_id=trace_id)
+          mode=mode, resume_count=0, trace_id=trace_id, intent=intent["intent"])
     return result
 
 
@@ -918,7 +937,7 @@ def recent_plans(limit: int = 20) -> list[dict]:
     try:
         rows = conn.execute(
             "SELECT id, session_id, goal, status, tokens_used, cost_cny, duration_ms, "
-            "resume_count, created_at "
+            "resume_count, intent, created_at "
             "FROM agent_plans ORDER BY created_at DESC LIMIT ?", (int(limit),)).fetchall()
         return [dict(r) for r in rows]
     finally:

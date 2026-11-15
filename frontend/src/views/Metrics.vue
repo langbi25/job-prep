@@ -171,6 +171,97 @@
           </el-col>
         </el-row>
       </el-card>
+      <!-- 意图分析：用户在拿 agent 干什么、哪类意图贵/容易失败 -->
+      <el-card shadow="never" style="margin-top: 12px">
+        <template #header><div class="card-head"><span>意图分析</span>
+          <span class="hint">
+            每条编排按目标意图聚合 · 早期未分类的归「未分类」单列，不混进「其他」
+          </span></div></template>
+        <el-empty v-if="!intents.items.length" description="还没有编排记录" :image-size="50" />
+        <el-table v-else :data="intents.items" size="small">
+          <el-table-column label="意图" width="110">
+            <template #default="{ row }">
+              <el-tag size="small" :effect="row.intent === 'unknown' ? 'info' : 'plain'">
+                {{ row.label }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="plans" label="条数" width="64" align="right" />
+          <el-table-column label="成功率" width="80" align="right">
+            <template #default="{ row }">{{ pct(row.success_rate) }}</template>
+          </el-table-column>
+          <el-table-column label="硬失败" width="80" align="right">
+            <template #default="{ row }">
+              <span :class="{ bad: row.hard_failure_rate >= 0.3 }">{{ pct(row.hard_failure_rate) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="软停" width="70" align="right">
+            <template #default="{ row }">{{ pct(row.soft_stop_rate) }}</template>
+          </el-table-column>
+          <el-table-column label="平均费用" width="92" align="right">
+            <template #default="{ row }">¥{{ num(row.avg_cost_cny) }}</template>
+          </el-table-column>
+          <el-table-column label="平均耗时" width="90" align="right">
+            <template #default="{ row }">{{ ms(row.avg_duration_ms) }}</template>
+          </el-table-column>
+          <el-table-column label="平均步数" width="86" align="right">
+            <template #default="{ row }">{{ row.avg_steps }}</template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+
+      <!-- 子 agent 运行视图：每个角色单独一笔账 -->
+      <el-card shadow="never" style="margin-top: 12px">
+        <template #header><div class="card-head"><span>子 Agent 运行视图</span>
+          <span class="hint">
+            LLM/工具来自台账打标（scene=orchestrate:角色 · source=agent:角色），步骤来自 steps_json · main = 规划/汇总/校验（无角色权限）
+          </span></div></template>
+        <el-empty v-if="!subagents.roles.length" description="还没有编排记录" :image-size="50" />
+        <el-table v-else :data="subagents.roles" size="small">
+          <el-table-column label="角色" width="90">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.role === 'main' ? 'info' : 'primary'" effect="plain">
+                {{ row.role === 'main' ? '主控' : roleZh(row.role) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="LLM 调用" width="82" align="right">
+            <template #default="{ row }">
+              {{ row.llm_calls }}<span v-if="row.llm_errors" class="bad"> ({{ row.llm_errors }}败)</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="费用" width="84" align="right">
+            <template #default="{ row }">¥{{ num(row.cost_cny) }}</template>
+          </el-table-column>
+          <el-table-column label="LLM P95" width="82" align="right">
+            <template #default="{ row }">{{ ms(row.llm_p95_ms) }}</template>
+          </el-table-column>
+          <el-table-column label="工具调用" width="90" align="right">
+            <template #default="{ row }">
+              <span v-if="row.role === 'main'">—</span>
+              <template v-else>
+                {{ row.tool_calls }}<span v-if="row.tool_denied" class="hint"> (拒{{ row.tool_denied }})</span>
+              </template>
+            </template>
+          </el-table-column>
+          <el-table-column label="步骤 完/挂/弃" width="110" align="right">
+            <template #default="{ row }">
+              <span v-if="row.role === 'main'">—</span>
+              <template v-else>{{ row.steps_done }} / <span :class="{ bad: row.steps_failed }">{{ row.steps_failed }}</span> / {{ row.steps_skipped }}</template>
+            </template>
+          </el-table-column>
+          <el-table-column label="重试" width="60" align="right" prop="retries" />
+          <el-table-column label="主要模型" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }"><span class="mono">{{ row.main_model || '—' }}</span></template>
+          </el-table-column>
+          <el-table-column label="常用工具" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span v-if="!row.top_tools.length">—</span>
+              <template v-else>{{ row.top_tools.map(t => `${t.tool}×${t.n}`).join('、') }}</template>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
     </template>
   </div>
 </template>
@@ -189,6 +280,8 @@ const llm = computed(() => data.value?.llm?.summary || {})
 const b = computed(() => data.value?.budget || {})
 const tools = computed(() => data.value?.tools || { by_tool: [], error_kinds: [] })
 const o = computed(() => data.value?.orchestration || { by_status: {}, step_status: [], step_models: [] })
+const intents = computed(() => data.value?.intents || { items: [], unclassified: 0 })
+const subagents = computed(() => data.value?.subagents || { roles: [] })
 const totalCost = computed(() => (data.value?.llm?.by_day || []).reduce((s, d) => s + (d.cost_cny || 0), 0))
 const maxDay = computed(() => Math.max(0.01, ...(data.value?.llm?.by_day || []).map((d) => d.cost_cny || 0)))
 

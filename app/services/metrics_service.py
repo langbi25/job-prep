@@ -29,6 +29,13 @@ from ..core.db import get_conn
 # 编排终态里不算"失败"的两类：钱/时间不够，不是实现坏了
 _SOFT_STOPS = ("capped", "timeout")
 
+# 意图中文标签（单一来源是 app/agents/intent.INTENTS，这里只读）
+from ..agents.intent import INTENTS as _INTENT_LABELS  # noqa: E402
+
+# 子 agent 角色清单（与 orchestrator.ROLE_TOOLS 对齐；主控环节单独成栏，不混进角色）
+_SUB_ROLES = ("researcher", "analyst", "writer", "critic")
+_MAIN_SCENES = ("orchestrate:plan", "orchestrate:synthesize", "orchestrate:critique")
+
 
 def _since(days: int) -> str:
     days = max(1, int(days))
@@ -221,6 +228,194 @@ def _orchestration(days: int) -> dict:
     }
 
 
+def _agents(days: int) -> dict:
+    """子 agent 角色级运行视图：每个角色单独一笔账。
+
+    原始数据在落库时已各自打标，这里只按同一把钥匙拼：
+    - llm_usage.scene  = "orchestrate:{role}"  → LLM 调用/费用/延迟
+    - tool_calls.source = "agent:{role}"       → 工具调用/失败/拒绝
+    - agent_plans.steps_json                   → 步骤终态/重试/实际模型
+
+    主控环节（plan/synthesize/critique）不算子 agent，单独归 "main" 栏：
+    它们没有工具、没有角色权限，混进角色表会让"哪个角色贵"这个问题答不准——
+    synthesize 一次就比 researcher 一个下午查证的钱还多。
+    """
+    def _bucket() -> dict:
+        return {"llm_calls": 0, "llm_errors": 0, "prompt_tokens": 0,
+                "completion_tokens": 0, "cost_cny": 0.0, "llm_lat": [],
+                "tool_calls": 0, "tool_errors": 0, "tool_denied": 0, "tool_lat": [],
+                "tools": {}, "steps": 0, "steps_done": 0, "steps_failed": 0,
+                "steps_skipped": 0, "retries": 0, "step_cost": 0.0,
+                "step_durations": [], "models": {}}
+
+    buckets: dict[str, dict] = {}
+
+    def _b(key: str) -> dict:
+        return buckets.setdefault(key, _bucket())
+
+    conn = get_conn()
+    try:
+        llm_rows = conn.execute(
+            "SELECT model, scene, prompt_tokens, completion_tokens, cost_cny, latency_ms, status "
+            "FROM llm_usage WHERE scene LIKE 'orchestrate:%' AND substr(ts,1,10) >= ?",
+            (_since(days),)).fetchall()
+        tool_rows = conn.execute(
+            "SELECT tool, source, status, error_kind, latency_ms "
+            "FROM tool_calls WHERE source LIKE 'agent:%' AND ts >= ?",
+            (_since(days),)).fetchall()
+        plan_rows = conn.execute(
+            "SELECT steps_json FROM agent_plans WHERE substr(created_at,1,10) >= ?",
+            (_since(days),)).fetchall()
+    finally:
+        conn.close()
+
+    for r in llm_rows:
+        suffix = (r["scene"] or "").split(":", 1)[-1]
+        key = suffix if suffix in _SUB_ROLES else (
+            "main" if suffix in ("plan", "synthesize", "critique") else None)
+        if key is None:
+            continue  # 未知场景后缀不猜——指标宁可少一行也不能串账
+        b = _b(key)
+        failed = (r["status"] or "ok") != "ok"
+        b["llm_calls"] += 1
+        b["llm_errors"] += 1 if failed else 0
+        b["prompt_tokens"] += int(r["prompt_tokens"] or 0)
+        b["completion_tokens"] += int(r["completion_tokens"] or 0)
+        b["cost_cny"] += float(r["cost_cny"] or 0.0)
+        if r["latency_ms"] is not None and not failed:
+            b["llm_lat"].append(int(r["latency_ms"]))
+
+    for r in tool_rows:
+        role = (r["source"] or "").split(":", 1)[-1]
+        if role not in _SUB_ROLES:
+            continue
+        b = _b(role)
+        denied = (r["error_kind"] or "") == "policy_denied"
+        failed = (r["status"] or "ok") != "ok"
+        b["tool_calls"] += 1
+        b["tool_errors"] += 1 if (failed and not denied) else 0
+        b["tool_denied"] += 1 if denied else 0
+        if r["latency_ms"] is not None:
+            b["tool_lat"].append(int(r["latency_ms"]))
+        tool = r["tool"] or "unknown"
+        b["tools"][tool] = b["tools"].get(tool, 0) + 1
+
+    for r in plan_rows:
+        try:
+            steps = json.loads(r["steps_json"] or "[]")
+        except (ValueError, TypeError):
+            continue
+        for s in steps if isinstance(steps, list) else []:
+            if not isinstance(s, dict):
+                continue
+            role = str(s.get("role") or "")
+            if role not in _SUB_ROLES:
+                continue
+            b = _b(role)
+            stt = str(s.get("status") or "?")
+            b["steps"] += 1
+            b["steps_done"] += 1 if stt == "done" else 0
+            b["steps_failed"] += 1 if stt == "failed" else 0
+            b["steps_skipped"] += 1 if stt == "skipped" else 0
+            b["retries"] += 1 if s.get("retries") else 0
+            b["step_cost"] += float(s.get("cost_cny") or 0.0)
+            if s.get("duration_ms"):
+                b["step_durations"].append(int(s["duration_ms"]))
+            model = str(s.get("model") or "")
+            if model:
+                b["models"][model] = b["models"].get(model, 0) + 1
+
+    def _main_model(b: dict) -> str:
+        return max(b["models"].items(), key=lambda kv: kv[1])[0] if b["models"] else ""
+
+    out = []
+    # 角色按固定顺序展示，多一个空角色说明枚举没对齐，别隐藏它
+    for key in _SUB_ROLES + ("main",):
+        if key not in buckets:
+            continue
+        b = buckets[key]
+        executed_tools = max(0, b["tool_calls"] - b["tool_denied"])
+        top_tools = sorted(b["tools"].items(), key=lambda kv: -kv[1])[:3]
+        out.append({
+            "role": key,
+            "llm_calls": b["llm_calls"], "llm_errors": b["llm_errors"],
+            "tokens": b["prompt_tokens"] + b["completion_tokens"],
+            "cost_cny": round(b["cost_cny"], 6),
+            "llm_p95_ms": _pct(b["llm_lat"], 0.95),
+            "tool_calls": b["tool_calls"], "tool_errors": b["tool_errors"],
+            "tool_denied": b["tool_denied"],
+            "tool_p95_ms": _pct(b["tool_lat"], 0.95),
+            "top_tools": [{"tool": t, "n": n} for t, n in top_tools],
+            "steps": b["steps"], "steps_done": b["steps_done"],
+            "steps_failed": b["steps_failed"], "steps_skipped": b["steps_skipped"],
+            "retries": b["retries"],
+            "step_cost_cny": round(b["step_cost"], 6),
+            "avg_step_ms": int(sum(b["step_durations"]) / len(b["step_durations"]))
+                           if b["step_durations"] else None,
+            "main_model": _main_model(b),
+        })
+    return {"roles": out}
+
+
+def _intents(days: int) -> dict:
+    """按意图聚合编排：用户在拿 agent 干什么、哪类意图贵/容易失败。
+
+    早期计划没有 intent 列（NULL），归 unknown 单列而不是回填 other——
+    "没分过类"和"分出来是其他"是两回事；混在一起会把兜底类的真实占比抬高。
+    """
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT intent, status, cost_cny, duration_ms, steps_json "
+            "FROM agent_plans WHERE substr(created_at,1,10) >= ?", (_since(days),)).fetchall()
+    finally:
+        conn.close()
+
+    def _bucket() -> dict:
+        return {"plans": 0, "done": 0, "soft": 0, "hard": 0, "other_status": 0,
+                "costs": [], "durations": [], "steps": 0}
+
+    by: dict[str, dict] = {}
+    for r in rows:
+        intent = r["intent"] or "unknown"
+        b = by.setdefault(intent, _bucket())
+        b["plans"] += 1
+        st = r["status"] or "unknown"
+        if st == "done":
+            b["done"] += 1
+        elif st in _SOFT_STOPS:
+            b["soft"] += 1
+        elif st in ("failed", "partial"):
+            b["hard"] += 1
+        else:
+            b["other_status"] += 1
+        b["costs"].append(float(r["cost_cny"] or 0.0))
+        b["durations"].append(int(r["duration_ms"] or 0))
+        try:
+            steps = json.loads(r["steps_json"] or "[]")
+        except (ValueError, TypeError):
+            steps = []
+        b["steps"] += len(steps) if isinstance(steps, list) else 0
+
+    items = []
+    for intent, b in by.items():
+        plans = b["plans"] or 1
+        items.append({
+            "intent": intent,
+            "label": _INTENT_LABELS.get(intent, intent),
+            "plans": b["plans"], "done": b["done"],
+            "success_rate": _rate(b["done"], b["plans"]),
+            "hard_failure_rate": _rate(b["hard"], b["plans"]),
+            "soft_stop_rate": _rate(b["soft"], b["plans"]),
+            "avg_cost_cny": round(sum(b["costs"]) / plans, 6),
+            "avg_duration_ms": int(sum(b["durations"]) / plans),
+            "avg_steps": round(b["steps"] / plans, 1),
+        })
+    items.sort(key=lambda d: -d["plans"])
+    return {"items": items,
+            "unclassified": by.get("unknown", {}).get("plans", 0)}
+
+
 def overview(days: int = 7) -> dict:
     """一次拿全部：LLM / 工具 / 编排 + 当日成本水位。
 
@@ -238,6 +433,8 @@ def overview(days: int = 7) -> dict:
         "llm": llm,
         "tools": _tools(days),
         "orchestration": _orchestration(days),
+        "subagents": _agents(days),
+        "intents": _intents(days),
         "budget": {**budget.status(),
                    "today_cost_cny": (today or {}).get("cost_cny", 0.0),
                    "today_calls": (today or {}).get("calls", 0)},

@@ -1,0 +1,25 @@
+name: intent_classify
+version: 1
+description: 给编排目标打意图标签（规则未命中时的 LLM 兜底）
+system: |
+  你是意图分类器。判断用户目标属于哪一类意图，输出 JSON。
+
+  意图枚举（只能从中选一个）：
+  - status_query 查状态：问进度、问数字、问清单（薄弱点有哪些、面过几场、卡还剩几张）
+  - analysis     分析诊断：解释原因、对比取舍、找根因（为什么总错、哪个方向优先级高）
+  - content      写作产出：生成给人看的成品（总结、报告、草稿、复习提纲）
+  - planning     规划安排：定计划、排日程、给步骤（接下来两周怎么复习）
+  - review       纠错复盘：针对做错/答砸的东西找问题、给改进（这道题错在哪、复盘上次模拟）
+  - other        其他：以上都对不上，或目标太模糊没法判断
+
+  判断原则：
+  1. 按用户想要的结果分类，不是按他用的动词。"写一下各模块错误率对比"要的是对比结论，算 analysis。
+  2. 目标里同时带查询和分析时，取最终要交付的那个（查数字是为了分析 → analysis）。
+  3. 拿不准就选 other，不要硬猜——错标签比无标签更误导统计。
+user: |
+  目标：{goal}
+
+  输出 JSON：{{"intent": "枚举里的一个", "reason": "一句话依据"}}
+output_schema:
+  intent: status_query|analysis|content|planning|review|other
+  reason: string

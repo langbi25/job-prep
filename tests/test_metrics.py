@@ -53,15 +53,15 @@ def _tool(conn, tool="search_kb", status="ok", error_kind=None, latency=50,
          error_kind, latency, retried, cached, time.strftime("%Y-%m-%dT%H:%M:%S")))
 
 
-def _plan(conn, status="done", cost=0.05, duration=20000, steps=None):
+def _plan(conn, status="done", cost=0.05, duration=20000, steps=None, intent=None):
     steps = steps or [{"id": "s1", "role": "researcher", "status": "done",
                        "model": "deepseek-chat", "retries": 0}]
     conn.execute(
         "INSERT INTO agent_plans (id, goal, plan_json, status, steps_json, result_json, "
-        "tokens_used, cost_cny, duration_ms, mode, resume_count, created_at, updated_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "tokens_used, cost_cny, duration_ms, mode, resume_count, intent, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (f"plan-{time.time_ns()}", "目标", "[]", status, json.dumps(steps, ensure_ascii=False),
-         "{}", 100, cost, duration, "assist", 0,
+         "{}", 100, cost, duration, "assist", 0, intent,
          time.strftime("%Y-%m-%dT%H:%M:%S"), time.strftime("%Y-%m-%dT%H:%M:%S")))
 
 
@@ -189,10 +189,99 @@ def test_orchestration_step_breakdown(fresh_db):
     assert models == {"deepseek-chat": 1, "deepseek-reasoner": 1}
 
 
+def test_subagents_merge_three_sources(fresh_db):
+    """子 agent 视图三源合一：LLM 台账 + 工具台账 + 步骤快照按角色对上。
+
+    对不上账的测试价值最大：role 在 llm_usage 里叫 orchestrate:analyst、
+    在 tool_calls 里叫 agent:analyst、在 steps_json 里叫 analyst——
+    三个打标点任何一个改了前缀，这里立刻红。
+    """
+    conn = db.get_conn()
+    # analyst：LLM 2 次（1 失败）+ 1 次工具被拒 + 2 步（1 done 1 failed 带 retry）
+    _llm(conn, scene="orchestrate:analyst", model="deepseek-reasoner", cost=0.04)
+    _llm(conn, scene="orchestrate:analyst", model="deepseek-reasoner", cost=0.02,
+         status="error", latency=3000)
+    conn.execute(
+        "INSERT INTO tool_calls (ts, tool, source, skill, status, error_kind, "
+        "latency_ms, retried, cached, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (time.strftime("%Y-%m-%dT%H:%M:%S"), "search_kb", "agent:analyst", "-", "error",
+         "policy_denied", 5, 0, 0, time.strftime("%Y-%m-%dT%H:%M:%S")))
+    _plan(conn, steps=[
+        {"id": "s1", "role": "analyst", "status": "done", "model": "deepseek-reasoner",
+         "cost_cny": 0.04, "duration_ms": 4000},
+        {"id": "s2", "role": "analyst", "status": "failed", "model": "deepseek-reasoner",
+         "retries": 1, "cost_cny": 0.02, "duration_ms": 6000},
+    ])
+    # 主控：plan + synthesize 两行，归 main，不混进角色
+    _llm(conn, scene="orchestrate:plan", cost=0.01)
+    _llm(conn, scene="orchestrate:synthesize", cost=0.03)
+    conn.commit()
+
+    roles = {d["role"]: d for d in metrics_service.overview(7)["subagents"]["roles"]}
+    a = roles["analyst"]
+    assert a["llm_calls"] == 2 and a["llm_errors"] == 1
+    assert a["cost_cny"] == pytest.approx(0.06)
+    assert a["tool_calls"] == 1 and a["tool_denied"] == 1 and a["tool_errors"] == 0
+    assert a["steps"] == 2 and a["steps_done"] == 1 and a["steps_failed"] == 1
+    assert a["retries"] == 1
+    assert a["step_cost_cny"] == pytest.approx(0.06)
+    assert a["avg_step_ms"] == 5000
+    assert a["main_model"] == "deepseek-reasoner"
+    assert a["top_tools"] == [{"tool": "search_kb", "n": 1}]
+    m = roles["main"]
+    assert m["llm_calls"] == 2
+    assert m["cost_cny"] == pytest.approx(0.04)
+    assert m["tool_calls"] == 0 and m["steps"] == 0
+    # 没跑过的角色不出空行：researcher/writer/critic 在窗口里没数据
+    assert set(roles) == {"analyst", "main"}
+
+
+def test_subagents_ignores_unknown_scene_suffix(fresh_db):
+    """未知场景后缀不猜归属——宁可少一行也不能把费用串到角色上。"""
+    conn = db.get_conn()
+    _llm(conn, scene="orchestrate:typo_role", cost=0.5)
+    _llm(conn, scene="console", cost=0.01)          # 非编排场景不进子 agent 视图
+    conn.commit()
+    assert metrics_service.overview(7)["subagents"]["roles"] == []
+
+
+def test_intents_aggregate_and_keep_unknown_separate(fresh_db):
+    """按意图聚合 + unknown 单列。
+
+    早期计划没有意图列（NULL）。归 unknown 而不是回填 other 是刻意的：
+    "没分过类"和"分出来是其他"是两回事，混在一起会把兜底类占比抬高。
+    """
+    conn = db.get_conn()
+    _plan(conn, "done", cost=0.10, duration=10000, intent="analysis")
+    _plan(conn, "done", cost=0.30, duration=30000, intent="analysis")
+    _plan(conn, "failed", cost=0.02, duration=5000, intent="status_query")
+    _plan(conn, "capped", cost=0.50, duration=40000)             # 老数据，无意图
+    _plan(conn, "done", cost=0.01, duration=2000, intent="bogus")  # 幻觉类别按原样保留
+    conn.commit()
+
+    out = metrics_service.overview(7)["intents"]
+    items = {d["intent"]: d for d in out["items"]}
+    an = items["analysis"]
+    assert an["label"] == "分析诊断"
+    assert an["plans"] == 2 and an["done"] == 2
+    assert an["success_rate"] == 1.0
+    assert an["avg_cost_cny"] == pytest.approx(0.20)
+    assert an["avg_duration_ms"] == 20000
+    sq = items["status_query"]
+    assert sq["hard_failure_rate"] == 1.0
+    # NULL ≠ other：unknown 独立成行，不占用"其他"的口径
+    assert items["unknown"]["plans"] == 1
+    assert out["unclassified"] == 1
+    # 幻觉意图原样透传（打上原始标签），label 回退为原始串
+    assert items["bogus"]["plans"] == 1 and items["bogus"]["label"] == "bogus"
+
+
 def test_empty_window_is_zero_not_crash(fresh_db):
     out = metrics_service.overview(7)
     assert out["llm"]["summary"]["calls"] == 0
     assert out["llm"]["summary"]["p95_ms"] is None      # 没有样本就不该编一个"很快"
     assert out["tools"]["summary"]["calls"] == 0
     assert out["orchestration"]["plans"] == 0
+    assert out["subagents"]["roles"] == []
+    assert out["intents"]["items"] == []
     assert out["budget"]["today_cost_cny"] == 0.0

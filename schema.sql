@@ -531,6 +531,7 @@ CREATE TABLE IF NOT EXISTS agent_plans (
   resume_count INTEGER NOT NULL DEFAULT 0,         -- 续跑过几次：多次续跑说明 plan 质量有问题
   trace_id     TEXT,                               -- 首跑那次的 trace_id；续跑沿用它，
                                                    -- 否则一次编排在调用树里会断成两棵
+  intent       TEXT,                               -- 意图标签（intent.INTENTS 枚举），NULL = 早期未分类
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL
 );

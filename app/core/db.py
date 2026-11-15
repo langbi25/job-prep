@@ -191,6 +191,10 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     acols = {r["name"] for r in conn.execute("PRAGMA table_info(agent_plans)")}
     if "trace_id" not in acols:
         conn.execute("ALTER TABLE agent_plans ADD COLUMN trace_id TEXT")
+    # 意图标签列：老行留 NULL 而不是回填 other——"没分过类"和"分出来是其他"
+    # 是两件事，指标里 unknown 单列，混在一起会把兜底类的真实占比抬高。
+    if "intent" not in acols:
+        conn.execute("ALTER TABLE agent_plans ADD COLUMN intent TEXT")
 
     if "llm_aux" not in tcols:
         conn.execute("ALTER TABLE turn_facts ADD COLUMN llm_aux INTEGER NOT NULL DEFAULT 0")
