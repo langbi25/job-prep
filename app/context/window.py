@@ -50,13 +50,25 @@ class Selection:
 
 
 def key_hits(msg: dict) -> list[tuple[str, int]]:
-    """这条消息命中了哪些锚定特征：[(理由, 优先级)]，空列表 = 不锚定。"""
-    if msg.get("role") not in ("user", "assistant"):
+    """这条消息命中了哪些锚定特征：[(理由, 优先级)]，空列表 = 不锚定。
+
+    **P0 只认用户自己说的话**。助手回复里"必须""只能"是讲解措辞（"必须先把
+    checkpoint 打开""只能做到 at-least-once"），不是用户立的规矩。早先两边都判，
+    30 轮真实压力测试里 12 轮有 11 轮被当成约束轮——`_drop_oldest_soft` 扫完
+    一个都丢不掉，`drop_oldest_turn` 形同虚设，超预算也不裁历史。
+
+    P1（业务 id / 评分结论）仍然认助手的：那是"这轮提到过哪个对象"，
+    与谁说的无关，丢了就无法回溯引用。
+    """
+    role = msg.get("role")
+    if role not in ("user", "assistant"):
         return []
     text = msg.get("content") or ""
     if not text.strip():
         return []
-    return [(why, pri) for pat, why, pri in KEY_PATTERNS if re.search(pat, text)]
+    allowed = (0, 1) if role == "user" else (1,)
+    return [(why, pri) for pat, why, pri in KEY_PATTERNS
+            if pri in allowed and re.search(pat, text)]
 
 
 def key_reasons(msg: dict) -> list[str]:

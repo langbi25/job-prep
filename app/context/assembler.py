@@ -72,10 +72,17 @@ def _drop_oldest_soft(kept: list[dict]) -> list[dict] | None:
     """丢掉最旧的一"软"轮（不含用户约束轮的整轮）。
 
     返回 None 表示剩下的全是约束轮——这时候"守预算"要让位给"别丢用户说过的规则"。
+
+    **保护有上界**（与 `window.select` 同一套规则：只有最近 MAX_P0 条约束轮受保护）。
+    不设上界时，只要用户每句话都带个"不要/只能"（"不要说教，直接讲"这种极常见），
+    所有轮都成了约束轮，一轮也丢不掉——压力测试里 10 轮全带"不要"，预算 106% 了
+    还在 keep_constraint，等于降级链最后一级形同虚设。
     """
     turns = window.group_turns(kept)
+    cidx = [i for i, t in enumerate(turns) if any(window.is_constraint(m) for m in t)]
+    protected = set(cidx[-window.MAX_P0:])
     for i, t in enumerate(turns):
-        if any(window.is_constraint(m) for m in t):
+        if i in protected:
             continue
         if len(turns) - i <= 1:        # 最后一轮不动
             return None
@@ -183,14 +190,25 @@ def _assemble_inner(session_id: str | None, system: str, user_msg: str, history:
         total = count_messages(messages)
 
     if total > budget.usable and summary_block:
-        half = max(80, budget.alloc("retrieval") // 2)
-        tightened = summarizer.format_for_prompt(summary_row["summary"], half)
+        # 按"当前超了多少"来裁，而不是"能不能比原来短"。
+        # 旧判据（短了就留、没短就丢）在预算阶梯上不单调：预算 3500 时整段丢，
+        # 预算 2000 时反而留下 237 token——预算越紧留下的越多，说不通。
+        over = total - budget.usable
+        want = max(80, count_tokens(summary_block) - over - 40)
+        tightened = summarizer.format_for_prompt(summary_row["summary"], want)
         if count_tokens(tightened) < count_tokens(summary_block):
             degraded.append("shorten_summary")
             summary_block = tightened
         else:
             degraded.append("drop_summary")
             summary_block = ""
+        messages, sys_text = build()
+        total = count_messages(messages)
+
+    # 缩短后仍然超：整段丢。摘要是"锦上添花"，为了保住它去丢用户的轮次不值得。
+    if total > budget.usable and summary_block:
+        degraded.append("drop_summary")
+        summary_block = ""
         messages, sys_text = build()
         total = count_messages(messages)
 
