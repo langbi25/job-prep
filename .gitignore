@@ -20,3 +20,6 @@ node_modules/
 
 # 外部 MCP server 配置（含本机绝对路径，不提交；样例见 mcp_servers.example.json）
 mcp_servers.json
+
+# pytest 临时目录（--basetemp 指定在仓库内，避免 Windows 清理失败）
+.pytest_tmp/
