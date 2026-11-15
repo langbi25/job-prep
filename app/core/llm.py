@@ -242,13 +242,18 @@ def _consume_stream(body: dict, on_delta=None):
 
 
 def _usage_of(usage: dict | None, latency_ms: float | None = None,
-              finish_reason: str | None = None, retried: bool = False) -> dict:
+              finish_reason: str | None = None, retried: bool = False,
+              model: str | None = None) -> dict:
     """从 API usage 提取计费要素并落台账。
 
     缓存命中 token 两个来源都要兜：DeepSeek 顶层给 prompt_cache_hit_tokens，
     OpenAI 风格藏在 prompt_tokens_details.cached_tokens。
     返回的 dict 会挂在 msg["_usage"] 上——**调用方必须从这里取用量**，
     不能用 llm.last_usage()：那是进程级全局变量，编排三步并行时会串账。
+
+    model 必须由调用方传实际用的模型：编排已按角色路由到不同模型，
+    这里若仍取 config.LLM_MODEL，两种模型的调用会记成同一个名字——
+    单价不同，成本视图直接算错，而且错得看不出来。
     """
     u = usage or {}
     pt, ct = int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)
@@ -256,7 +261,7 @@ def _usage_of(usage: dict | None, latency_ms: float | None = None,
     if not cached:
         cached = int(((u.get("prompt_tokens_details") or {}).get("cached_tokens")) or 0)
     from ..observability import tracing as tr  # 惰性导入：otel 重依赖不拖累普通调用
-    model = config.LLM_MODEL
+    model = model or config.LLM_MODEL
     latency = round(latency_ms) if latency_ms is not None else None
     row = pricing.record_usage(model, prompt_tokens=pt, completion_tokens=ct,
                                cached_tokens=cached,
@@ -273,7 +278,8 @@ def _usage_of(usage: dict | None, latency_ms: float | None = None,
             "retried": bool(retried)}
 
 
-def _usage_failed(err: BaseException, latency_ms: float | None = None) -> None:
+def _usage_failed(err: BaseException, latency_ms: float | None = None,
+                  model: str | None = None) -> None:
     """失败调用也落一行。**只记事实，不记推测**：token 记 0（API 没返回 usage），
     费用记 0（真的没花），但"调过、失败了、错了什么"必须留下。
 
@@ -281,7 +287,7 @@ def _usage_failed(err: BaseException, latency_ms: float | None = None) -> None:
     """
     from ..observability import tracing as tr
     try:
-        pricing.record_usage(config.LLM_MODEL, scene=tr.current_scene(),
+        pricing.record_usage(model or config.LLM_MODEL, scene=tr.current_scene(),
                              session_id=tr.current_session() or None,
                              turn=tr.current_turn(), trace_id=tr.current_trace_id(),
                              latency_ms=round(latency_ms) if latency_ms is not None else None,
@@ -310,8 +316,12 @@ def _ensure_json_hint(messages: list[dict]) -> None:
 
 def _chat_json(system: str | None, user: str | None, tools: list | None = None,
                messages: list | None = None, temperature: float = 0.1,
-               json_mode: bool = True, on_delta=None) -> dict:
+               json_mode: bool = True, on_delta=None, model: str | None = None) -> dict:
     """发起对话补全。tools 模式返回原始 message（可能含 tool_calls），否则返回解析后的 JSON message。
+
+    model 为空时用 config.LLM_MODEL。编排按角色路由模型就从这里传：
+    **只覆盖单次调用，不改全局配置**——同一个进程里编排步骤用 reasoner、
+    对话用 chat，互不干扰。
 
     json_mode=False 用于"我要的是一段话，不是 JSON"的场景（如摘要压缩）：
     强制 json_object 时模型会把整段文字塞进 {"content": "..."} 里，
@@ -333,7 +343,8 @@ def _chat_json(system: str | None, user: str | None, tools: list | None = None,
     # 浅拷贝一层：下面可能往消息里补「请只输出 JSON」，不能改到调用方传进来的列表
     # （编排层会把同一份 messages 反复用于多轮，被改一次就永久多一句）
     messages = [dict(m) for m in messages]
-    body = {"model": config.LLM_MODEL, "messages": messages, "temperature": temperature}
+    use_model = model or config.LLM_MODEL
+    body = {"model": use_model, "messages": messages, "temperature": temperature}
     if tools:
         body["tools"] = tools
         body["tool_choice"] = "auto"
@@ -347,7 +358,7 @@ def _chat_json(system: str | None, user: str | None, tools: list | None = None,
     # 并发额度在 span 之外拿：排队时间不属于"这次调用"的耗时，混进 duration
     # 会把上游过载误读成模型变慢；等待时长单独记进 span 属性，过载一眼可见。
     with _pool_slot() as pool_wait_ms, tr.span("llm.chat", tr.KIND_LLM, {
-        tr.ATTR_MODEL: config.LLM_MODEL,
+        tr.ATTR_MODEL: use_model,
         "llm.scene": tr.current_scene() or "unknown",
         "llm.n_messages": len(messages),
         "llm.tools": len(tools) if tools else 0,
@@ -384,7 +395,7 @@ def _chat_json(system: str | None, user: str | None, tools: list | None = None,
         except Exception as e_first:
             # 先落失败账再看要不要降级：一次失败就是一次真实发生过的调用，
             # 不记的话"这轮很慢"永远查不出是模型在重试。
-            _usage_failed(e_first, (time.perf_counter() - t_req) * 1000)
+            _usage_failed(e_first, (time.perf_counter() - t_req) * 1000, model=use_model)
             if not stream:
                 raise
             # 流式失败降级非流式重试一次：可用性优先于观测细节。
@@ -420,7 +431,7 @@ def _chat_json(system: str | None, user: str | None, tools: list | None = None,
         # （编排三步并行时会互相覆盖，步费用会串账）。
         finish = msg.pop("_finish", None)
         u = _usage_of(usage, (time.perf_counter() - t_req) * 1000,
-                      finish_reason=finish, retried=fell_back)
+                      finish_reason=finish, retried=fell_back, model=use_model)
         msg["_usage"] = u
         if s is not None:
             pt, ct = u["prompt_tokens"], u["completion_tokens"]
@@ -445,7 +456,7 @@ def _chat_json(system: str | None, user: str | None, tools: list | None = None,
         return msg
 
 
-def chat_parsed(system: str, user: str, **kw) -> dict:
+def chat_parsed(system: str, user: str, model: str | None = None, **kw) -> dict:
     """非 tools 场景的统一入口：调用 → 解析 → 解析失败重试一次（附纠错指令）。
 
     重试不是免费的：两次调用的 token/费用都真实发生，所以把 _usage 做成
@@ -459,7 +470,7 @@ def chat_parsed(system: str, user: str, **kw) -> dict:
         total["cost_cny"] = round(total.get("cost_cny", 0.0) + (u.get("cost_cny") or 0.0), 6)
         total["model"] = u.get("model") or total.get("model")
 
-    msg = _chat_json(system, user, **kw)
+    msg = _chat_json(system, user, model=model, **kw)
     merge(msg.get("_usage") or {})
     try:
         data = extract_json(msg["content"])
@@ -469,7 +480,7 @@ def chat_parsed(system: str, user: str, **kw) -> dict:
                   {"role": "assistant", "content": (msg.get("content") or "")[:4000]},
                   {"role": "user", "content": "上面的输出不是合法 JSON（可能有多余内容或围栏）。"
                                               "请只输出一个 JSON 对象，不要任何解释、不要代码块。"}]
-        msg2 = _chat_json(None, None, messages=repair, temperature=0)
+        msg2 = _chat_json(None, None, messages=repair, temperature=0, model=model)
         merge(msg2.get("_usage") or {})
         data = extract_json(msg2["content"])
     data["_usage"] = dict(total)

@@ -19,6 +19,7 @@
 import concurrent.futures
 import datetime
 import json
+import os
 import random
 import threading
 import time
@@ -33,6 +34,12 @@ MAX_STEPS = 5
 MAX_PARALLEL = 3
 STEP_TIMEOUT_S = 180
 
+# 编排自己的三道闸。和 LLM 并发池/日预算不是一回事：
+# 日预算是"今天别花超"，这里管"这一条计划别跑飞"——
+# 5 步 × 每步 3 次工具往返，加上校验重跑，单条计划跑出 10 分钟、几块钱是可能的。
+DEADLINE_S = 300            # 整条编排的墙钟上限（含并行批次，不是每步）
+MAX_COST_CNY = 0.5          # 单条计划的费用上限（元）
+
 ROLE_TOOLS = {
     "researcher": ("get_daily_brief", "get_weak_topics", "get_top_questions", "search_kb",
                    "list_due_cards", "list_open_mistakes", "list_recent_ingests",
@@ -44,6 +51,45 @@ ROLE_TOOLS = {
     "critic": (),
 }
 ROLE_LABEL = {"researcher": "调研", "analyst": "分析", "writer": "撰写", "critic": "校验"}
+
+# 角色 → 模型。默认全部跟随 config.LLM_MODEL；要分角色路由就设
+# ORCH_ROLE_MODEL='{"analyst":"deepseek-reasoner","critic":"deepseek-reasoner"}'。
+#
+# 为什么做成路由而不是全局换模型：四个角色的成本结构完全不同。researcher 只做
+# 查证，输出短、调用次数多，用便宜模型就够；analyst/critic 的输出直接决定答案质量，
+# 值得用贵一倍的推理模型。全局换模型只能二选一，等于让查证也背上推理模型的单价。
+_RAW_CACHE: tuple[str, dict[str, str]] = ("", {})
+
+
+def role_model(role: str) -> str:
+    """这个角色该用哪个模型。环境变量改动即时生效（按原始串缓存解析结果）。"""
+    global _RAW_CACHE
+    raw = (os.getenv("ORCH_ROLE_MODEL") or "").strip()
+    if raw != _RAW_CACHE[0]:
+        try:
+            data = json.loads(raw) if raw else {}
+            if not isinstance(data, dict):
+                data = {}
+        except (ValueError, TypeError):
+            data = {}          # 配错不能让编排起不来，退回全局默认
+        _RAW_CACHE = (raw, {str(k): str(v) for k, v in data.items() if str(v).strip()})
+    return _RAW_CACHE[1].get(role) or config.LLM_MODEL
+
+
+def _route_warnings() -> list[str]:
+    """路由配置里不认识的角色名只警告不报错——拼错一个键不该让整条计划失败，
+    但也绝不能静默：静默的话"我明明配了 reasoner，怎么还是 chat"会查很久。"""
+    role_model("-")  # 触发一次解析，保证 _RAW_CACHE 是最新的
+    return [f"ORCH_ROLE_MODEL 里的角色 {k} 不存在，已忽略" for k in _RAW_CACHE[1]
+            if k not in ROLE_TOOLS]
+
+
+def _env_num(name: str, default, cast=float):
+    """读环境变量并转型；写坏了退回默认值。"""
+    try:
+        return cast(os.getenv(name, "") or default)
+    except (TypeError, ValueError):
+        return default
 ROLE_RULES = {
     "researcher": "你的任务是查证：调用只读工具把事实取回来（数字、id、清单、状态）。"
                   "不做判断、不给建议——判断留给下游步骤。查到就停，不要反复查同一个东西。",
@@ -69,6 +115,11 @@ class PlanStep:
     duration_ms: int = 0
     error: str | None = None
     tools: list[str] = field(default_factory=list)
+    # 实际用的模型：路由之后"这一步为什么贵"必须能在结果里直接看到，
+    # 不能只留在 span 属性里等你去翻调用树。
+    model: str = ""
+    retries: int = 0
+    retryable: bool = False     # 失败是否属于"同一请求重试可能成功"
 
 
 class Blackboard:
@@ -83,6 +134,10 @@ class Blackboard:
 
     def __init__(self, seed: dict[str, str] | None = None):
         self._done: dict[str, str] = {k: v for k, v in (seed or {}).items() if v}
+        # 编排被闸门中止时记在这里（cost / deadline / None）。
+        # 挂在 board 上而不是改返回值：_execute 的返回值被测试和多处调用当作
+        # "结论板"用，多一个元组会让每个调用点都跟着改，收益不值。
+        self.stop: str | None = None
 
     def put(self, step_id: str, output: str) -> None:
         self._done[step_id] = (output or "").strip()[:2000]
@@ -209,12 +264,19 @@ def plan(goal: str, *, context: str = "", max_steps: int = MAX_STEPS) -> dict:
         if s is not None:
             s.set_attribute("agent.steps", len(steps))
             s.set_attribute("agent.plan_warnings", "; ".join(errs) or "-")
-        return {"steps": steps, "warnings": errs}
+        return {"steps": steps, "warnings": errs + _route_warnings()}
 
 
 def run_step(step: PlanStep, *, goal: str, upstream: str, mode: str = "assist",
-             session_id: str | None = None, budget_tokens: int = 3000) -> PlanStep:
-    """执行一个步骤。上下文只含：全局目标、本步职责、上游结论。"""
+             session_id: str | None = None, budget_tokens: int = 3000,
+             shrink: bool = False) -> PlanStep:
+    """执行一个步骤。上下文只含：全局目标、本步职责、上游结论。
+
+    shrink=True 是"重试时的收缩"：工具往返次数减一。上游结论的收窄由
+    `_run_with_retry` 在调用前做掉（这里只负责"少查一轮"）——重试如果原样
+    再来一遍，遇到上下文过长/工具反复失败的情况只会再失败一次；少查一轮
+    换一次机会，比原样重试有用。
+    """
     from ..observability import tracing as tr
     from ..context import assembler
     from ..context.token_budget import Budget
@@ -222,6 +284,7 @@ def run_step(step: PlanStep, *, goal: str, upstream: str, mode: str = "assist",
     # 本步骤的调用——并行跑三步时各自的 scene 不会互相串。
     tr.set_scene(f"orchestrate:{step.role}")
     t0 = time.perf_counter()
+    step.model = role_model(step.role)
     allowed = ROLE_TOOLS[step.role]
     all_tools, all_impl = harness_admin.all_tools()
     impl = {k: v for k, v in all_impl.items() if k in allowed}
@@ -238,15 +301,18 @@ def run_step(step: PlanStep, *, goal: str, upstream: str, mode: str = "assist",
 
         with tr.agent_span(f"agent.step.{step.id}", {
                 "agent.role": step.role, "agent.step_id": step.id,
-                "agent.step_goal": step.goal[:300], "agent.parent_goal": goal[:300]}) as _tid:
+                "agent.step_goal": step.goal[:300], "agent.parent_goal": goal[:300],
+                "gen_ai.request.model": step.model}) as _tid:
             content = ""
             max_iters = 3 if step.role in ("researcher", "analyst") else 1
+            if shrink and max_iters > 1:
+                max_iters -= 1
             for _i in range(max_iters):
                 # 没有工具时（writer/critic/analyst）必须关掉 json_mode：
                 # DeepSeek 的 json_object 模式要求 prompt 里有 "json" 字样，
                 # 否则返回 400。这个坑让第一版编排的撰写步骤整步失败。
                 msg = llm._chat_json(None, None, tools=tools, messages=messages,
-                                     json_mode=bool(tools))
+                                     json_mode=bool(tools), model=step.model)
                 # 用量必须从 msg["_usage"] 取：llm.last_usage() 是进程级全局，
                 # 这里三个步骤并行跑，全局值会互相覆盖，步费用会串到别的步上。
                 use = msg.get("_usage") or {}
@@ -277,7 +343,7 @@ def run_step(step: PlanStep, *, goal: str, upstream: str, mode: str = "assist",
                 # "json" 字样，否则直接 400——这个坑让第一次真实编排整条挂掉）。
                 msg = llm._chat_json(None, None, messages=messages + [{
                     "role": "user", "content": "基于上面查到的内容，用 3 句话给出本步结论，不要再调用工具。"}],
-                    json_mode=False)
+                    json_mode=False, model=step.model)
                 use = msg.get("_usage") or {}
                 step.tokens += int(use.get("prompt_tokens") or 0) + int(use.get("completion_tokens") or 0)
                 step.cost += float(use.get("cost_cny") or 0.0)
@@ -287,19 +353,49 @@ def run_step(step: PlanStep, *, goal: str, upstream: str, mode: str = "assist",
     except Exception as e:  # noqa: BLE001  单步失败不该让整条编排崩掉
         step.status = "failed"
         step.error = f"{type(e).__name__}: {e}"[:300]
+        # 只有"同一请求重试可能成功"的错误才值得重试：429/5xx/超时/并发等待。
+        # 参数错、prompt 不合法这类 400，原样重试必败，重试只是把一次失败变两次。
+        step.retryable = bool(getattr(e, "retryable", False)) or isinstance(
+            e, (llm.LLMConcurrencyError, concurrent.futures.TimeoutError, TimeoutError))
         step.output = f"（本步失败：{step.error}）"
     step.duration_ms = int((time.perf_counter() - t0) * 1000)
     return step
 
 
+def _run_with_retry(step: PlanStep, *, goal: str, upstream: str, mode: str,
+                    session_id: str | None, budget_tokens: int) -> PlanStep:
+    """跑一步；可重试的失败再给一次机会，且第二次收窄上下文。
+
+    只重试一次，理由和 _retry_round 一致：重试的边际收益递减，而"无限重试"
+    是编排里最容易变成烧钱黑洞的写法。收窄上下文是因为原样重来往往还是同样的
+    超长/超时；砍掉上游细节换一次机会，比复读一次有用。
+    """
+    st = run_step(step, goal=goal, upstream=upstream, mode=mode,
+                  session_id=session_id, budget_tokens=budget_tokens)
+    if st.status == "done" or not st.retryable or st.retries:
+        return st
+    st.retries = 1
+    st.error = None
+    # 收窄在**调用方**做而不是 run_step 里：这样"第二次到底给了模型什么"
+    # 在调度层就能看见，也才好断言/复现。
+    narrowed = upstream[: max(200, len(upstream) // 2)] if upstream else upstream
+    return run_step(st, goal=goal, upstream=narrowed, mode=mode,
+                    session_id=session_id, budget_tokens=budget_tokens, shrink=True)
+
+
 def _execute(steps: list[PlanStep], *, goal: str, mode: str, session_id: str | None,
              budget_tokens: int, board: Blackboard | None = None,
-             emit=None) -> Blackboard:
+             emit=None, deadline: float | None = None,
+             max_cost: float | None = None) -> Blackboard:
     """拓扑调度：依赖满足即并行，最多 MAX_PARALLEL 个。
 
     board 传入时视为续跑：里面已有结论、且 status=done 的步骤不再执行。
     emit 逐步骤发事件——编排一次 20~35 秒，没有进度反馈时用户只能干等，
     而"卡在哪一步"恰恰是排查失败的第一手信息。
+
+    两道闸门在**派发前**检查（deadline / max_cost），不打断已经在跑的批次：
+    强行杀线程会让"这一步到底做了什么"变成空白，而编排的每一步都在花钱，
+    留下半截结果 + 明确的 stop 原因，比干净的空白有用得多。
     """
     def _emit(ev: dict) -> None:
         # 事件是观测，不能反过来影响调度：emit 抛异常绝不能让 DAG 失败
@@ -319,11 +415,39 @@ def _execute(steps: list[PlanStep], *, goal: str, mode: str, session_id: str | N
     todo_n = max(1, len(pending))
     per_step_budget = max(800, budget_tokens // todo_n)
 
+    deadline = deadline if deadline is not None else time.time() + _env_num(
+        "ORCH_DEADLINE_S", DEADLINE_S)
+    max_cost = max_cost if max_cost is not None else _env_num(
+        "ORCH_MAX_COST_CNY", MAX_COST_CNY)
+
+    def _halt(reason: str, detail: str) -> None:
+        """中止剩余步骤：逐个标 skipped 并发事件，原因写进 error。
+
+        不写成 failed：它们没跑过，标 failed 会污染失败率统计（告警里
+        plan 失败率就是按 failed 算的，把"没轮到"算成"跑挂了"会虚报）。
+        """
+        board.stop = reason
+        for s in pending:
+            s.status = "skipped"
+            s.error = detail
+            _emit({"type": "step_end", "id": s.id, "role": s.role,
+                   "status": "skipped", "tokens": 0, "duration_ms": 0,
+                   "error": detail})
+
     # 并行步骤要共用同一个 trace / 父 span，先在这里抓一次（见 work() 里的 adopt）
     from ..observability import tracing as _tr
     _dag_ctx = _tr.capture()
 
     while pending:
+        spent = sum(s.cost for s in steps)
+        if max_cost and spent >= max_cost:
+            _halt("cost", f"成本闸门：本次已花 ¥{spent:.4f}，超过上限 ¥{max_cost}")
+            break
+        left = deadline - time.time()
+        if left <= 0:
+            _halt("deadline", f"截止时间到：已超过 {int(_env_num('ORCH_DEADLINE_S', DEADLINE_S))} 秒")
+            break
+
         ready: list[PlanStep] = []
         for s in pending:
             # 上游失败 → 本步直接跳过。不要"带病继续"：下游拿不到上游结论，
@@ -353,31 +477,36 @@ def _execute(steps: list[PlanStep], *, goal: str, mode: str, session_id: str | N
             _emit({"type": "step_start", "id": st.id, "role": st.role})
             t0 = time.perf_counter()
             try:
-                return run_step(st, goal=goal, upstream=board.view(st.depends_on), mode=mode,
-                                session_id=session_id, budget_tokens=per_step_budget)
+                return _run_with_retry(st, goal=goal, upstream=board.view(st.depends_on),
+                                       mode=mode, session_id=session_id,
+                                       budget_tokens=per_step_budget)
             finally:
                 # 成功、失败、抛异常都要发结束事件，否则前端会永远停在"进行中"
                 _emit({"type": "step_end", "id": st.id, "role": st.role,
                        "status": st.status, "tokens": st.tokens,
                        "duration_ms": int((time.perf_counter() - t0) * 1000),
-                       "error": st.error})
+                       "error": st.error, "model": st.model, "retries": st.retries})
 
         if len(batch) == 1:
             work(batch[0])
         else:
+            # 批次超时不超过剩余时间：截止时间是整条计划的承诺，不能因为
+            # 一批 3 步各自 180 秒就被突破。
+            batch_timeout = max(1, min(STEP_TIMEOUT_S, left))
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(batch)) as ex:
                 futs = {ex.submit(work, s): s for s in batch}
                 try:
-                    for f in concurrent.futures.as_completed(futs, timeout=STEP_TIMEOUT_S):
+                    for f in concurrent.futures.as_completed(futs, timeout=batch_timeout):
                         f.result()
                 except concurrent.futures.TimeoutError:
                     for s in batch:
                         if s.status == "pending":
                             s.status = "failed"
                             s.error = "步骤超时"
+                            s.retryable = True
                             _emit({"type": "step_end", "id": s.id, "role": s.role,
                                    "status": "failed", "tokens": 0,
-                                   "duration_ms": STEP_TIMEOUT_S * 1000,
+                                   "duration_ms": int(batch_timeout * 1000),
                                    "error": "步骤超时"})
         for s in batch:
             if s.status == "done":
@@ -447,6 +576,7 @@ def _save(plan_id: str, *, session_id: str | None, goal: str, steps: list[PlanSt
                               "tokens": s.tokens, "cost_cny": round(s.cost, 6),
                               "duration_ms": s.duration_ms,
                               "tools": s.tools, "error": s.error,
+                              "model": s.model, "retries": s.retries,
                               "output": s.output[:1200]} for s in steps], ensure_ascii=False),
                  json.dumps(result, ensure_ascii=False)[:20000],
                  tokens, round(cost, 6), duration_ms, mode, int(resume_count),
@@ -456,6 +586,47 @@ def _save(plan_id: str, *, session_id: str | None, goal: str, steps: list[PlanSt
             conn.close()
     except Exception:  # noqa: BLE001  台账写失败不该影响已经拿到的答案
         pass
+
+
+def _halted_answer(steps: list[PlanStep], stop: str | None) -> str:
+    """被闸门中止时的答案：只拼已完成步骤的原文，不再调模型。
+
+    为什么连汇总也停：成本闸门的意义就是"别再花钱了"。实测第一版在 capped
+    之后照样跑 synthesize+critique，比上限多花 4 倍——闸门只管住步骤，
+    等于门只关了一半。截止时间同理：时间已经用完，再花 10 秒汇总只是拖更久。
+    """
+    head = {"cost": "成本闸门触发，未做汇总（避免继续产生费用）",
+            "deadline": "截止时间到，未做汇总"}.get(stop or "", "编排中止，未做汇总")
+    done = [s for s in steps if s.status == "done" and s.output]
+    if not done:
+        return f"{head}。没有任何步骤跑完。"
+    body = "\n\n".join(
+        f"### {s.id}（{ROLE_LABEL.get(s.role, s.role)}）\n{s.output}" for s in done)
+    return f"{head}。以下是已完成步骤的原始结论：\n\n{body}"
+
+
+def _final_status(steps: list[PlanStep], stop: str | None = None) -> str:
+    """计划终态。capped / timeout 单独成态，不并进 partial：
+    两者都要人接手（调预算或调 DAG），而 partial 只表示"有几步挂了"。
+    混在一起的话，失败率统计会把"预算不够"和"实现有 bug"算成同一件事。
+    """
+    if stop == "cost":
+        return "capped"
+    if stop == "deadline":
+        return "timeout"
+    if all(s.status == "done" for s in steps):
+        return "done"
+    return "partial" if any(s.status == "done" for s in steps) else "failed"
+
+
+def _step_brief(s: PlanStep) -> dict:
+    """结果里每步的公开字段。model 与 retries 一定要带上：
+    "这一步为什么贵/为什么慢"的答案就在这两个字段里。"""
+    return {"id": s.id, "role": s.role, "role_label": ROLE_LABEL.get(s.role, s.role),
+            "goal": s.goal, "status": s.status, "tools": s.tools,
+            "tokens": s.tokens, "cost_cny": round(s.cost, 6),
+            "duration_ms": s.duration_ms, "model": s.model,
+            "retries": s.retries, "error": s.error}
 
 
 def _retry_round(steps: list[PlanStep], verdict: dict, board: Blackboard, *,
@@ -514,6 +685,8 @@ def _steps_from_row(row) -> list[PlanStep]:
             cost=float(st.get("cost_cny") or 0),
             duration_ms=int(st.get("duration_ms") or 0),
             tools=list(st.get("tools") or []),
+            model=str(st.get("model") or ""),
+            retries=int(st.get("retries") or 0),
             error=st.get("error")))
     return out
 
@@ -590,19 +763,28 @@ def resume(plan_id: str, *, retry: bool = True) -> dict:
                 "agent.mode": mode, "agent.resume_no": resume_no,
                 "agent.resume_done_steps": len(done_ids)}) as trace_id:
             extras: list[dict] = []
+            # 续跑也是"一条计划"，闸门照旧，但成本上限按累计值放宽：
+            # 库里已经花掉的部分不该让这次续跑一步都跑不了。
             _execute(steps, goal=goal, mode=mode, session_id=session_id,
-                     budget_tokens=budget, board=board)
-            with pricing.collect() as c:
-                answer = synthesize(goal, steps, mode=mode)
-                verdict = critique(goal, answer, steps)
-            extras += c
+                     budget_tokens=budget, board=board,
+                     deadline=time.time() + _env_num("ORCH_DEADLINE_S", DEADLINE_S),
+                     max_cost=prev_cost + _env_num("ORCH_MAX_COST_CNY", MAX_COST_CNY))
             rounds = 0
-            if retry:
-                new_answer, verdict, rounds = _retry_round(
-                    steps, verdict, board, goal=goal, mode=mode,
-                    session_id=session_id, extras=extras)
-                if new_answer is not None:
-                    answer = new_answer
+            if board.stop:
+                answer = _halted_answer(steps, board.stop)
+                verdict = {"ok": False, "issues": [f"编排中止：{board.stop}"],
+                           "retry_steps": [], "halted": board.stop}
+            else:
+                with pricing.collect() as c:
+                    answer = synthesize(goal, steps, mode=mode)
+                    verdict = critique(goal, answer, steps)
+                extras += c
+                if retry:
+                    new_answer, verdict, rounds = _retry_round(
+                        steps, verdict, board, goal=goal, mode=mode,
+                        session_id=session_id, extras=extras)
+                    if new_answer is not None:
+                        answer = new_answer
 
         extra_usage = pricing.accumulate(extras)
         # 只加"这次新花的部分"：base_* 是库里恢复出来的上次累计值
@@ -611,20 +793,14 @@ def resume(plan_id: str, *, retry: bool = True) -> dict:
         cost = round(prev_cost + added_cost + extra_usage["cost_cny"], 6)
         tokens = prev_tokens + added_tokens
         duration_ms = int((time.perf_counter() - t0) * 1000)
-        failed = [s.id for s in steps if s.status not in ("done",)]
-        status = "done" if not failed else ("partial" if any(s.status == "done" for s in steps) else "failed")
+        status = _final_status(steps, board.stop)
 
         result = {"plan_id": plan_id, "goal": goal, "answer": answer,
-                  "steps": [{"id": s.id, "role": s.role,
-                             "role_label": ROLE_LABEL.get(s.role, s.role),
-                             "goal": s.goal, "status": s.status, "tools": s.tools,
-                             "tokens": s.tokens, "cost_cny": round(s.cost, 6),
-                             "duration_ms": s.duration_ms,
-                             "error": s.error} for s in steps],
+                  "steps": [_step_brief(s) for s in steps],
                   "critique": verdict, "retry_rounds": rounds,
-                  "warnings": [], "tokens": tokens, "cost_cny": cost,
+                  "warnings": _route_warnings(), "tokens": tokens, "cost_cny": cost,
                   "cost_extra": extra_usage, "duration_ms": duration_ms,
-                  "status": status, "trace_id": trace_id,
+                  "status": status, "stopped_by": board.stop, "trace_id": trace_id,
                   "resumed": True, "resume_count": resume_no,
                   "previous_status": prev_status,
                   "resumed_steps": [s.id for s in steps if s.id not in done_ids],
@@ -672,6 +848,9 @@ def orchestrate(goal: str, *, session_id: str | None = None, mode: str = "assist
     t0 = time.perf_counter()
     plan_id = _plan_id()
     budget = max(2000, int(config.CTX_SOFT_CAP) * 2)
+    # 截止时间从进函数就开始算：规划本身也要花 3~8 秒，只给执行留满额
+    # 会让"整条计划不超过 N 秒"这个承诺在第一次调用就失真。
+    deadline_ts = time.time() + _env_num("ORCH_DEADLINE_S", DEADLINE_S)
 
     with tr.agent_span("agent.orchestrate", {
             "agent.goal": goal[:800], "agent.mode": mode,
@@ -688,41 +867,46 @@ def orchestrate(goal: str, *, session_id: str | None = None, mode: str = "assist
               "steps": [{"id": s.id, "role": s.role,
                          "role_label": ROLE_LABEL.get(s.role, s.role),
                          "goal": (s.goal or "")[:200],
+                         "model": role_model(s.role),
                          "depends_on": list(s.depends_on)} for s in steps]})
         board = _execute(steps, goal=goal, mode=mode, session_id=session_id,
-                         budget_tokens=budget, emit=emit)
-        emit({"type": "synthesize"})
-        with pricing.collect() as c:
-            answer = synthesize(goal, steps, mode=mode)
-            verdict = critique(goal, answer, steps)
-        extras += c
-        emit({"type": "critique", "ok": bool(verdict.get("ok")),
-              "issues": [str(x)[:160] for x in (verdict.get("issues") or [])][:6]})
+                         budget_tokens=budget, emit=emit, deadline=deadline_ts)
         rounds = 0
-        if retry:
-            new_answer, verdict, rounds = _retry_round(
-                steps, verdict, board, goal=goal, mode=mode,
-                session_id=session_id, extras=extras)
-            if new_answer is not None:
-                answer = new_answer
+        if board.stop:
+            # 被闸门中止：不再调用合成与自检（那也是一次 LLM 调用）
+            if board.stop == "cost":
+                emit({"type": "synthesize", "skipped": "cost_gate"})
+            answer = _halted_answer(steps, board.stop)
+            verdict = {"ok": False, "issues": [f"编排中止：{board.stop}"],
+                       "retry_steps": [], "halted": board.stop}
+        else:
+            emit({"type": "synthesize"})
+            with pricing.collect() as c:
+                answer = synthesize(goal, steps, mode=mode)
+                verdict = critique(goal, answer, steps)
+            extras += c
+            emit({"type": "critique", "ok": bool(verdict.get("ok")),
+                  "issues": [str(x)[:160] for x in (verdict.get("issues") or [])][:6]})
+            if retry:
+                new_answer, verdict, rounds = _retry_round(
+                    steps, verdict, board, goal=goal, mode=mode,
+                    session_id=session_id, extras=extras)
+                if new_answer is not None:
+                    answer = new_answer
 
     extra_usage = pricing.accumulate(extras)
     tokens = sum(s.tokens for s in steps)
     cost = round(sum(s.cost for s in steps) + extra_usage["cost_cny"], 6)
     duration_ms = int((time.perf_counter() - t0) * 1000)
-    failed = [s.id for s in steps if s.status not in ("done",)]
-    status = "done" if not failed else ("partial" if any(s.status == "done" for s in steps) else "failed")
+    status = _final_status(steps, board.stop)
 
     result = {"plan_id": plan_id, "goal": goal, "answer": answer,
-              "steps": [{"id": s.id, "role": s.role, "role_label": ROLE_LABEL.get(s.role, s.role),
-                         "goal": s.goal, "status": s.status, "tools": s.tools,
-                         "tokens": s.tokens, "cost_cny": round(s.cost, 6),
-                         "duration_ms": s.duration_ms,
-                         "error": s.error} for s in steps],
+              "steps": [_step_brief(s) for s in steps],
               "critique": verdict, "retry_rounds": rounds,
               "warnings": planned["warnings"], "tokens": tokens,
               "cost_cny": cost, "cost_extra": extra_usage,
-              "duration_ms": duration_ms, "status": status, "trace_id": trace_id}
+              "duration_ms": duration_ms, "status": status,
+              "stopped_by": board.stop, "trace_id": trace_id}
     _save(plan_id, session_id=session_id, goal=goal, steps=steps, status=status,
           result=result, tokens=tokens, cost=cost, duration_ms=duration_ms,
           mode=mode, resume_count=0, trace_id=trace_id)

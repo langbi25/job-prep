@@ -43,6 +43,9 @@ class ToolOutcome:
     ref: str | None = None
     args: dict = field(default_factory=dict)
     read_only: bool = True
+    # 工具自己给出的失败分类（如 policy_denied）。比从 error 文案里猜可靠：
+    # "只查不改模式拒绝"和"工具执行报错"在台账里必须是两件事。
+    error_kind: str | None = None
 
 
 def _type_ok(value, want: str) -> bool:
@@ -247,6 +250,11 @@ def _exec_one(call: dict, impl: dict, schemas: dict, *, session_id: str | None,
             error = str(result["error"])[:300]
         payload, ref = _serialize(result, tool=name, args=args, session_id=session_id, turn=turn)
         ok = error is None and not (isinstance(result, dict) and result.get("ok") is False)
+        kind = None
+        if isinstance(result, dict):
+            declared = result.get("error_kind")
+            if declared in _ERROR_KINDS:
+                kind = declared
         if s is not None:
             s.set_attribute("output.value", payload)
             s.set_attribute("tool.result_chars", len(payload))
@@ -255,7 +263,7 @@ def _exec_one(call: dict, impl: dict, schemas: dict, *, session_id: str | None,
             s.set_attribute("tool.ok", ok)
             if not ok:
                 s.set_attribute("tool.error_kind",
-                                error if error in _ERROR_KINDS else "failed")
+                                kind or (error if error in _ERROR_KINDS else "failed"))
             if retried:
                 s.set_attribute("tool.retried", True)
             if ref:
@@ -263,14 +271,14 @@ def _exec_one(call: dict, impl: dict, schemas: dict, *, session_id: str | None,
             tr.record_tool_action(s, result if isinstance(result, dict) else None)
 
     oc = ToolOutcome(call_id, name, ok, payload, error, latency, retried=retried,
-                     ref=ref, args=args, read_only=readonly)
+                     ref=ref, args=args, read_only=readonly, error_kind=kind)
     if readonly:
         cache[key] = oc
     return oc
 
 
 _ERROR_KINDS = {"invalid_args", "unknown_tool", "timeout", "bad_json", "failed",
-                "missing", "disabled"}
+                "missing", "disabled", "policy_denied"}
 
 
 def record_calls(outcomes: list[ToolOutcome], *, source: str, skill: str,
@@ -289,7 +297,8 @@ def record_calls(outcomes: list[ToolOutcome], *, source: str, skill: str,
     for oc in outcomes:
         if not oc.name:
             continue
-        kind = oc.error if oc.error in _ERROR_KINDS else ("failed" if oc.error else None)
+        kind = oc.error_kind or (oc.error if oc.error in _ERROR_KINDS
+                                else ("failed" if oc.error else None))
         payload.append((
             now, oc.name, source or "console", skill or "-", session_id, int(turn or 0),
             trace_id or None,

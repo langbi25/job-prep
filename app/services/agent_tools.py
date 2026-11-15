@@ -35,8 +35,16 @@ def _writable() -> bool:
 
 
 def _denied(tool: str) -> dict:
+    """只查不改模式下的拒绝。
+
+    `error_kind` 是给台账用的机器可读标记：拒绝是**策略生效**，不是工具坏了。
+    没有这个标记时，dispatch 只能按"有 error 字段"判成 failed，
+    于是"assist 模式下模型试图写库"会被记成工具失败——实测 6/6 的 remember
+    失败全是这个原因，工具失败率直接从 0 变成 6%。指标算错比没有指标更危险。
+    """
     return {"ok": False, "error": f"当前是「只查不改」模式，{tool} 未执行。"
-                                  "如需真正执行，请让用户把模式切到「自动执行」。"}
+                                  "如需真正执行，请让用户把模式切到「自动执行」。",
+            "error_kind": "policy_denied"}
 
 
 def auto_pool_gate(extracted: dict) -> dict:

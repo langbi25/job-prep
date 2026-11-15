@@ -228,6 +228,19 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     if "trace_id" not in ccols2:
         conn.execute("ALTER TABLE tool_calls ADD COLUMN trace_id TEXT")
 
+    # 策略拒绝回填（2026-11-15）：早期把"只查不改模式下拒绝写工具"记成 failed，
+    # 工具失败率因此混进一批**根本没执行**的调用（实测 13 条错里 11 条是这类，
+    # remember 甚至 6/6 全是拒绝）。新写入走 agent_tools._denied 自带的 error_kind，
+    # 这里只把历史行对齐，否则指标要带着假失败再跑 14 天。幂等，每次启动跑一遍。
+    try:
+        n = conn.execute(
+            "UPDATE tool_calls SET error_kind='policy_denied' "
+            "WHERE error_kind='failed' AND error LIKE '%只查不改%'").rowcount
+        if n:
+            conn.commit()
+    except sqlite3.OperationalError:
+        pass
+
     # 记忆 scope 回填：偏好类一律跨会话。    # 实测发现早期抽取把 8 条记忆全写成 session → 新开一个会话就"什么都不记得"，
     # 而偏好（怎么讲、多长、要不要举例）按定义与具体会话无关。幂等，每次启动跑一遍。
     # 只动 preference：fact/episode 里确实可能有"只对这次面试有效"的内容，不替用户判断。

@@ -12,7 +12,7 @@ import os
 
 from fastapi import APIRouter
 
-from ..services import langfuse_service, obs_service
+from ..services import langfuse_service, metrics_service, obs_service
 
 router = APIRouter(prefix="/api/obs", tags=["observability"])
 
@@ -53,6 +53,17 @@ def overview(scope: str = "agent"):
         return _svc().overview(scope)
     except _ERRORS as e:
         return _fallback(e)
+
+
+@router.get("/metrics")
+def metrics(days: int = 7):
+    """本地指标聚合：按场景/模型/工具的延迟与成本、编排成功率。
+
+    **不走 OBS_BACKEND 分派**：这组数字来自本地三张台账（llm_usage / tool_calls /
+    agent_plans），Phoenix 或 Langfuse 挂了它照样有数据——"今天花了多少钱、
+    哪个工具在失败"不该依赖一个外部服务是否在线。
+    """
+    return metrics_service.overview(days)
 
 
 @router.get("/traces")

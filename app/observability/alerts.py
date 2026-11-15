@@ -24,6 +24,10 @@ import requests
 
 RULE_ERROR_RATE = "error_rate"
 RULE_SLOW = "slow_calls"
+# 后三条是 2026-11-15 补的。前两条只看"请求有没有失败/慢不慢"，而实际出事
+# 最常见的三种形态一个都覆盖不到：钱悄悄花超了、某个工具一直失败但整体错误率
+# 没到阈值（工具调用只占少数）、编排在反复挂。三条都带样本保护——
+# 样本太少时任何比率都不可信，宁可不报。
 
 _loop_stop = threading.Event()
 _loop_thread: threading.Thread | None = None
@@ -41,6 +45,11 @@ def _env_int(name: str, default: int) -> int:
         return int(os.getenv(name, "") or default)
     except ValueError:
         return default
+
+
+RULE_COST = "cost_spike"
+RULE_TOOL_FAILURE = "tool_failure"
+RULE_PLAN_FAILURE = "plan_failure"
 
 
 def config() -> dict:
@@ -63,6 +72,19 @@ def config() -> dict:
         "slow_count": _env_int("ALERT_SLOW_COUNT", 3),
         "cooldown_min": _env_int("ALERT_COOLDOWN_MIN", 30),
         "check_sec": _env_int("ALERT_CHECK_SEC", 60),
+        # 成本：既看"离日预算还有多远"，也看"比平时贵几倍"。
+        # 只看预算会漏掉"平时 5 分钱、今天 2 块钱"这种异常（还没触顶但很不正常）；
+        # 只看倍数会在总花费很小时乱报，所以两者都加绝对下限。
+        "budget_ratio": _env_float("ALERT_BUDGET_RATIO", 0.8),
+        "cost_spike_ratio": _env_float("ALERT_COST_SPIKE_RATIO", 3.0),
+        "cost_min_cny": _env_float("ALERT_COST_MIN_CNY", 0.5),
+        "tool_min_calls": _env_int("ALERT_TOOL_MIN_CALLS", 5),
+        "tool_error_rate": _env_float("ALERT_TOOL_ERROR_RATE", 0.3),
+        "plan_min_plans": _env_int("ALERT_PLAN_MIN_PLANS", 3),
+        "plan_failure_rate": _env_float("ALERT_PLAN_FAILURE_RATE", 0.5),
+        # 编排很稀疏（一天几条），用 5 分钟窗口永远凑不满样本。
+        # 所以它单独用小时级窗口，其余规则用 window_min。
+        "plan_window_min": _env_int("ALERT_PLAN_WINDOW_MIN", 180),
     }
 
 
@@ -99,6 +121,86 @@ def _since_iso(minutes: int) -> str:
     return (datetime.datetime.now()
             - datetime.timedelta(minutes=max(int(minutes), 1))).isoformat(
                 timespec="milliseconds")
+
+
+def cost_metrics(days: int = 7) -> dict:
+    """今日花费 vs 日均 vs 日预算。
+
+    口径是 llm_usage（业务视角的钱），不是 span 数——告警要说清"花了多少"，
+    而不是"调了几次"。日均**不含今天**：把今天算进去会把突增自己摊平，
+    花了 3 倍的钱只显示 1.5 倍。
+    """
+    from ..core import config as app_config  # noqa: PLC0415
+    from ..core.db import get_conn  # noqa: PLC0415
+
+    today = datetime.date.today()
+    since = (today - datetime.timedelta(days=max(2, int(days)) - 1)).isoformat()
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT substr(ts,1,10) AS day, ROUND(SUM(cost_cny), 6) AS c "
+            "FROM llm_usage WHERE substr(ts,1,10) >= ? GROUP BY day", (since,)).fetchall()
+    finally:
+        conn.close()
+    by_day = {r["day"]: float(r["c"] or 0.0) for r in rows}
+    today_cost = by_day.get(today.isoformat(), 0.0)
+    prev = [v for k, v in by_day.items() if k != today.isoformat()]
+    avg = round(sum(prev) / len(prev), 6) if prev else 0.0
+    limit = float(getattr(app_config, "LLM_DAILY_BUDGET_CNY", 5.0) or 5.0)
+    return {"today_cost_cny": round(today_cost, 6), "avg_day_cny": avg,
+            "prev_days": len(prev), "budget_cny": limit,
+            "budget_ratio": round(today_cost / limit, 4) if limit else 0.0,
+            "spike_ratio": round(today_cost / avg, 2) if avg > 0 else 0.0}
+
+
+def tool_window_metrics(window_min: int) -> dict:
+    """窗口内工具调用指标。工具失败率和请求错误率是两件事：
+    一个工具坏了，整体错误率可能只有 5%（工具调用只占少数请求），
+    但那个工具的成功率是 0——这条规则就是为这种情况存在的。"""
+    from ..core.db import get_conn  # noqa: PLC0415
+
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN status != 'ok' AND COALESCE(error_kind,'') != 'policy_denied' "
+            "THEN 1 ELSE 0 END) AS errors, "
+            "SUM(CASE WHEN error_kind = 'policy_denied' THEN 1 ELSE 0 END) AS denied "
+            "FROM tool_calls WHERE ts >= ?", (_since_iso(window_min),)).fetchone()
+        tops = conn.execute(
+            "SELECT tool, COUNT(*) AS n FROM tool_calls "
+            "WHERE ts >= ? AND status != 'ok' AND COALESCE(error_kind,'') != 'policy_denied' "
+            "GROUP BY tool ORDER BY n DESC LIMIT 3",
+            (_since_iso(window_min),)).fetchall()
+    finally:
+        conn.close()
+    total, errors = int(row["total"] or 0), int(row["errors"] or 0)
+    denied = int(row["denied"] or 0)
+    executed = max(0, total - denied)
+    return {"total": total, "errors": errors, "denied": denied,
+            "error_rate": round(errors / executed, 4) if executed else 0.0,
+            "top_tools": [{"tool": r["tool"], "n": r["n"]} for r in tops]}
+
+
+def plan_window_metrics(window_min: int) -> dict:
+    """窗口内编排终态分布。capped/timeout 单列：它们是"钱/时间不够"，
+    不是"跑挂了"，混进失败率会让告警指向错误的修法。"""
+    from ..core.db import get_conn  # noqa: PLC0415
+
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT status, COUNT(*) AS n FROM agent_plans "
+            "WHERE created_at >= ? GROUP BY status", (_since_iso(window_min),)).fetchall()
+    finally:
+        conn.close()
+    by_status = {r["status"]: int(r["n"]) for r in rows}
+    total = sum(by_status.values())
+    hard = sum(n for k, n in by_status.items() if k in ("failed", "partial"))
+    soft = sum(n for k, n in by_status.items() if k in ("capped", "timeout"))
+    return {"total": total, "failed": hard, "soft_stopped": soft,
+            "by_status": by_status,
+            "failure_rate": round(hard / total, 4) if total else 0.0}
 
 
 def _recently_alerted(rule: str, cooldown_min: int) -> bool:
@@ -203,7 +305,56 @@ def check_once() -> dict:
             _record(RULE_SLOW, "warning", msg, metrics, ok, err)
             triggered.append({"rule": RULE_SLOW, "delivered": ok, "error": err})
 
+    # ---- 成本：两个触发面，命中任一即报 ----
+    cm = cost_metrics(7)
+    reasons = []
+    if cm["budget_ratio"] >= cfg["budget_ratio"]:
+        reasons.append(f"已达日预算 {cm['budget_ratio']:.0%}")
+    if cm["spike_ratio"] >= cfg["cost_spike_ratio"]:
+        reasons.append(f"是近 {cm['prev_days']} 天日均的 {cm['spike_ratio']} 倍")
+    if reasons and cm["today_cost_cny"] >= cfg["cost_min_cny"]:
+        if _recently_alerted(RULE_COST, cfg["cooldown_min"]):
+            skipped.append({"rule": RULE_COST, "reason": "冷却期内"})
+        else:
+            msg = (f"【job-prep 告警】成本异常：今日已花 ¥{cm['today_cost_cny']:.2f}"
+                   f"（日预算 ¥{cm['budget_cny']:.2f}，日均 ¥{cm['avg_day_cny']:.2f}）。"
+                   f"原因：{'；'.join(reasons)}。去指标页看是哪个场景在涨。")
+            ok, err = _deliver(msg)
+            _record(RULE_COST, "warning", msg, cm, ok, err)
+            triggered.append({"rule": RULE_COST, "delivered": ok, "error": err})
+
+    # ---- 工具失败率 ----
+    tm = tool_window_metrics(cfg["window_min"])
+    if tm["total"] >= cfg["tool_min_calls"] and tm["error_rate"] >= cfg["tool_error_rate"]:
+        if _recently_alerted(RULE_TOOL_FAILURE, cfg["cooldown_min"]):
+            skipped.append({"rule": RULE_TOOL_FAILURE, "reason": "冷却期内"})
+        else:
+            tops = "、".join(f"{t['tool']}×{t['n']}" for t in tm["top_tools"]) or "（无明细）"
+            msg = (f"【job-prep 告警】工具失败集中：近 {cfg['window_min']} 分钟工具调用 "
+                   f"{tm['total']} 次、失败 {tm['errors']} 次"
+                   f"（{tm['error_rate']:.0%} ≥ 阈值 {cfg['tool_error_rate']:.0%}）。"
+                   f"最常失败：{tops}。参数错改 schema，执行错修实现。")
+            ok, err = _deliver(msg)
+            _record(RULE_TOOL_FAILURE, "warning", msg, tm, ok, err)
+            triggered.append({"rule": RULE_TOOL_FAILURE, "delivered": ok, "error": err})
+
+    # ---- 编排失败率 ----
+    pm = plan_window_metrics(cfg["plan_window_min"])
+    if pm["total"] >= cfg["plan_min_plans"] and pm["failure_rate"] >= cfg["plan_failure_rate"]:
+        if _recently_alerted(RULE_PLAN_FAILURE, cfg["cooldown_min"]):
+            skipped.append({"rule": RULE_PLAN_FAILURE, "reason": "冷却期内"})
+        else:
+            dist = "、".join(f"{k}×{v}" for k, v in sorted(pm["by_status"].items()))
+            msg = (f"【job-prep 告警】编排失败率高：近 {cfg['plan_window_min']} 分钟 "
+                   f"{pm['total']} 条计划里失败/部分失败 {pm['failed']} 条"
+                   f"（{pm['failure_rate']:.0%} ≥ 阈值 {cfg['plan_failure_rate']:.0%}）。"
+                   f"分布：{dist}。capped/timeout 不计入失败——那是预算与时间的问题。")
+            ok, err = _deliver(msg)
+            _record(RULE_PLAN_FAILURE, "warning", msg, pm, ok, err)
+            triggered.append({"rule": RULE_PLAN_FAILURE, "delivered": ok, "error": err})
+
     return {"checked": True, "metrics": metrics,
+            "cost": cm, "tools": tm, "plans": pm,
             "triggered": triggered, "skipped": skipped}
 
 

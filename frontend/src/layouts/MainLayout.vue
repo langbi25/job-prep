@@ -21,6 +21,7 @@
         <el-menu-item index="/retrospectives"><el-icon><Reading /></el-icon>复盘中心</el-menu-item>
         <el-menu-item index="/observability"><el-icon><Monitor /></el-icon>可观测中心</el-menu-item>
         <el-menu-item index="/traces"><el-icon><Share /></el-icon>调用树</el-menu-item>
+        <el-menu-item index="/metrics"><el-icon><Odometer /></el-icon>指标</el-menu-item>
         <el-menu-item index="/quality"><el-icon><Aim /></el-icon>回合质量</el-menu-item>
         <el-menu-item index="/agent-lab"><el-icon><Cpu /></el-icon>Agent 能力</el-menu-item>
         <el-menu-item index="/harness"><el-icon><Grid /></el-icon>Harness 管理</el-menu-item>
