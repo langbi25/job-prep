@@ -11,6 +11,7 @@
    下一轮再试。绝不因为压缩失败就让对话挂掉。
 """
 import datetime
+import re
 
 from ..core import llm
 from ..core.db import get_conn
@@ -18,7 +19,12 @@ from .token_budget import count_tokens
 
 MIN_BATCH = 4            # 少于这么多条不值得压（一次 LLM 调用换不回多少 token）
 KEEP_RECENT_MSGS = 12    # 与 CTX_RECENT_TURNS*2 对齐，最近的不压
-MAX_SUMMARY_CHARS = 1200
+# 600 而不是 1200：实测（20 轮真实会话）摘要从 377 字一路长到 863 字，
+# 压缩比跌到 0.6——"压缩"变成了"扩写"。prompt 里写 300 字模型不一定听，
+# 所以这里既降上限又做分段裁剪（见 _trim_to_budget），双保险。
+MAX_SUMMARY_CHARS = 600
+TRIM_MARK = "…（摘要已按预算压缩）"
+_SECTION_RE = re.compile(r"^\s*(事实|进度|约束)\s*[:：]\s*(.*)$")
 
 
 def _now() -> str:
@@ -60,6 +66,66 @@ def _transcript(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _split_sections(text: str) -> list[list]:
+    """按 事实/进度/约束 分段：[[name, [bullet...]], ...]；识别不出返回 []。"""
+    secs: list[list] = []
+    for ln in text.splitlines():
+        m = _SECTION_RE.match(ln)
+        if m:
+            secs.append([m.group(1), [m.group(2).strip()] if m.group(2).strip() else []])
+        elif secs and ln.strip():
+            secs[-1][1].append(ln.strip())
+    return secs
+
+
+def _render_sections(secs: list[list]) -> str:
+    parts = []
+    for name, bullets in secs:
+        parts.append(f"{name}：")
+        parts.extend(bullets)
+    return "\n".join(parts)
+
+
+def _trim_to_budget(text: str, limit: int = MAX_SUMMARY_CHARS) -> str:
+    """超出预算时按"进度 → 事实 → 约束正文"的顺序裁，**约束段永不整段丢**。
+
+    为什么不是简单的 text[:limit]：约束段总在最后，硬切必然先切掉它——
+    而它恰恰是后面最容易丢、也最不能丢的东西（"按 2C2G 来"丢了，后面所有
+    建议都会跑偏，而且从上下文里看不出跑偏的原因）。20 轮实测里摘要长到
+    863 字时，1200 的硬上限还没触发；一旦触发，切掉的正好是约束段。
+    """
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    secs = _split_sections(text)
+    if not secs:                      # 模型没按三段格式输出：只能硬切
+        return text[:limit - len(TRIM_MARK)].rstrip() + TRIM_MARK
+    # 1) 先压进度（每题至少留 1 条），再压事实
+    for target in ("进度", "事实"):
+        for sec in secs:
+            if sec[0] != target:
+                continue
+            while len(_render_sections(secs)) > limit and len(sec[1]) > 1:
+                sec[1].pop()
+    out = _render_sections(secs)
+    # 2) 还不够：从最后一段起逐条缩短正文（约束保留开头，砍细节）
+    if len(out) > limit:
+        for sec in reversed(secs):
+            for i in range(len(sec[1]) - 1, -1, -1):
+                overflow = len(out) - limit
+                if overflow <= 0:
+                    break
+                body = sec[1][i]
+                keep = max(24, len(body) - max(overflow, 1) - 1)
+                if keep < len(body):
+                    sec[1][i] = body[:keep].rstrip() + "…"
+                    out = _render_sections(secs)
+    # 3) 极端情况（单条就超长）：硬切，但保证段头还在
+    if len(out) > limit:
+        out = out[:limit - len(TRIM_MARK)].rstrip() + TRIM_MARK
+    return out
+
+
 def summarize(session_id: str, keep_recent: int = KEEP_RECENT_MSGS, force: bool = False) -> dict:
     """压一次。返回 {ok, summary_id?, covered?, error?}；不抛异常（异步任务里抛了就没人管）。"""
     rows = _pending(session_id, keep_recent)
@@ -76,7 +142,8 @@ def summarize(session_id: str, keep_recent: int = KEEP_RECENT_MSGS, force: bool 
         return {"ok": False, "error": f"CTX_SUMMARY_FAILED: {type(e).__name__}: {e}",
                 "session_id": session_id, "pending": len(rows)}
 
-    text = (text or "").strip()[:MAX_SUMMARY_CHARS]
+    raw = (text or "").strip()
+    text = _trim_to_budget(raw, MAX_SUMMARY_CHARS)
     if len(text) < 10:
         return {"ok": False, "error": "CTX_SUMMARY_FAILED: 模型返回空摘要",
                 "session_id": session_id, "pending": len(rows)}
@@ -96,7 +163,8 @@ def summarize(session_id: str, keep_recent: int = KEEP_RECENT_MSGS, force: bool 
     return {"ok": True, "summary_id": sid, "covered": [rows[0]["id"], rows[-1]["id"]],
             "n_messages": len(rows), "src_chars": src_chars,
             "summary_tokens": count_tokens(text),
-            "compression": round(src_chars / max(1, len(text)), 1)}
+            "compression": round(src_chars / max(1, len(text)), 1),
+            "trimmed": len(raw) > MAX_SUMMARY_CHARS, "raw_chars": len(raw)}
 
 
 def format_for_prompt(summary: str, max_tokens: int | None = None) -> str:
