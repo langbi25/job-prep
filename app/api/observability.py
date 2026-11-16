@@ -121,6 +121,30 @@ def alert_test():
     return alerts.send_test()
 
 
+@router.get("/jobs")
+def jobs_snapshot():
+    """定时任务注册表 + 执行历史（最近 50 条）。
+
+    调度配置落库（jobs 表）、执行历史落库（job_runs 表）——重启后
+    "昨晚的清理跑没跑、跑了多久"仍能回答。
+    """
+    from ..core import jobs
+
+    return jobs.snapshot()
+
+
+@router.post("/jobs/{name}/run")
+def jobs_run_now(name: str):
+    """手动触发一个任务：跳过到期判断但不跳过互斥，撞上定时执行宁可 skip 不双跑。"""
+    from fastapi import HTTPException
+    from ..core import jobs
+
+    try:
+        return jobs.run_job(name, force=True)
+    except KeyError as e:
+        raise HTTPException(404, str(e)) from e
+
+
 @router.get("/eval-intake")
 def eval_intake_stats():
     """评测素材池现状：失败轮自动进料了多少、按来源分布、最近 5 条。"""

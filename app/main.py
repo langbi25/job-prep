@@ -36,17 +36,34 @@ async def lifespan(app: FastAPI):
         print(f"[startup] vector index: {idx}")
     except Exception as e:  # noqa: BLE001
         print(f"[startup] vector index skipped: {e}")
-    # span 分级清理：普通 span 留 14 天，error 与慢调用留 3 倍（诊断证据不能和
-    # 噪音一起清掉）；行数超保险丝时再从最老的开始删，跳过那两类。
-    # 放在启动时做而不是定时任务：单机部署没有调度器，启动一次清一次够了。
+    # span 分级清理迁移进 job runner（app/core/jobs.py）：以前只在启动时清一次，
+    # 长驻进程几天不清、span 表悄悄膨胀；现在注册成 6h 间隔的任务，启动即到期
+    # 首跑，行为与旧版兼容但长期不再依赖"恰好重启"。
     try:
         from .observability import tracing as _tr
-        gone = _tr.prune_spans()
-        if gone:
-            print(f"[startup] spans pruned: {gone} 条（普通 {_tr.SPAN_RETENTION_DAYS} 天 / "
-                  f"错误与慢调用 {_tr.SPAN_RETENTION_DAYS * 3} 天）")
+        from .core import jobs as _jobs
+
+        _pruned = {"n": 0}
+
+        @_jobs.job("prune_spans", interval_s=6 * 3600, timeout_s=300)
+        def _prune_spans_task():
+            _pruned["n"] = _tr.prune_spans()
+
+        gone = _jobs.run_job("prune_spans")   # 启动即清一次（兜住重启前欠的账）
+        if gone.get("status") == "success":
+            print(f"[startup] spans pruned: {_pruned['n']} 条（job runner: 每 6h 一轮）")
     except Exception as e:  # noqa: BLE001
         print(f"[startup] span prune skipped: {e}")
+    # 通用调度器：表驱动任务（jobs 表）+ 文件锁互斥 + 执行历史（job_runs 表）。
+    # JOBS_ENABLED=0 时不启动。新任务用 @jobs.job(...) 装饰器注册，启动即跑。
+    try:
+        from .core import jobs as _jobs
+        if _jobs.start_scheduler():
+            print(f"[startup] job scheduler on: 每 {_jobs.scan_interval()}s 扫一轮到期任务")
+        else:
+            print("[startup] job scheduler disabled (JOBS_ENABLED=0)")
+    except Exception as e:  # noqa: BLE001
+        print(f"[startup] job scheduler skipped: {e}")
     # 可观测告警：错误率/慢调用超阈值推 webhook。未配置 ALERT_WEBHOOK_URL 或
     # ALERT_CHECK_SEC=0 时不启动，零开销。循环在守护线程里，判定失败只打日志。
     try:
@@ -61,6 +78,11 @@ async def lifespan(app: FastAPI):
     try:
         from .observability import alerts as _alerts
         _alerts.stop_background()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from .core import jobs as _jobs
+        _jobs.stop_scheduler()
     except Exception:  # noqa: BLE001
         pass
 

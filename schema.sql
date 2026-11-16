@@ -743,3 +743,34 @@ CREATE TABLE IF NOT EXISTS alerts (
   error     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_ts ON alerts(ts DESC);
+
+-- ---------------------------------------------------------------------------
+-- 任务调度（app/core/jobs.py）。
+--
+-- 表驱动 = 调度配置落库（interval/timeout/retries 的代码默认值 + enabled 的
+-- 运行时开关），执行历史也落库。单机互斥靠文件锁（fcntl/msvcrt，进程死锁自动
+-- 释放，不需要"锁过期时间"这种容易调错的魔法数）。
+--
+-- 为什么执行历史要落库而不是内存：重启后"昨晚的清理跑没跑、跑了多久"必须
+-- 还能回答；且多进程部署时（哪怕只是 uvicorn --workers 2）两个进程都看得见
+-- 对方的执行记录。
+CREATE TABLE IF NOT EXISTS jobs (
+  name        TEXT PRIMARY KEY,
+  interval_s  INTEGER NOT NULL,               -- 代码注册的默认值，代码是真相源
+  timeout_s   INTEGER NOT NULL DEFAULT 120,
+  retries     INTEGER NOT NULL DEFAULT 0,
+  enabled     INTEGER NOT NULL DEFAULT 1,     -- 运行时开关，落库保持跨重启
+  last_status TEXT,                           -- success|failed|timeout|skipped_locked
+  last_ts     TEXT,                           -- 上次**结束**时间，到期判断用它
+  updated_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS job_runs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  job         TEXT NOT NULL,
+  ts          TEXT NOT NULL,
+  attempt     INTEGER NOT NULL DEFAULT 1,
+  status      TEXT NOT NULL,                  -- success|failed|timeout|skipped_locked
+  duration_ms INTEGER,
+  error       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_job_runs_job ON job_runs(job, ts DESC);
