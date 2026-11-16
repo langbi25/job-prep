@@ -171,6 +171,49 @@
           </el-col>
         </el-row>
       </el-card>
+      <!-- 入口限流 & 上游熔断：进程内状态，重启归零 -->
+      <el-card shadow="never" style="margin-top: 12px">
+        <template #header><div class="card-head"><span>入口限流 · 上游熔断</span>
+          <span class="hint">
+            进程内计数（从 {{ guards.ratelimit.since || '启动' }} 起算，重启归零）· 与上方窗口无关
+          </span></div></template>
+        <el-row :gutter="16">
+          <el-col :span="12">
+            <div class="mini-title">限流（令牌桶：全局 + 按 IP，只拦 /api）</div>
+            <div class="mini-row"><span class="mini-k">放行 / 拒绝</span>
+              <span class="mini-n">{{ guards.ratelimit.allowed || 0 }} / <span :class="{ bad: guards.ratelimit.limited }">{{ guards.ratelimit.limited || 0 }}</span></span></div>
+            <div class="mini-row"><span class="mini-k">活跃 IP 桶</span>
+              <span class="mini-n">{{ guards.ratelimit.active_ips || 0 }}</span></div>
+            <div class="mini-row"><span class="mini-k">配置</span>
+              <span class="mini-n mono">
+                全局 {{ guards.ratelimit.config?.global_rps }}/s · 突发 {{ guards.ratelimit.config?.global_burst }} ·
+                单 IP {{ guards.ratelimit.config?.ip_rps }}/s · 突发 {{ guards.ratelimit.config?.ip_burst }}
+                <span v-if="guards.ratelimit.config?.enabled === false" class="bad">（已关闭）</span>
+              </span></div>
+            <div v-if="guards.ratelimit.top_limited?.length" class="mini-row">
+              <span class="mini-k">被限最多的 IP</span>
+              <span class="mini-n">{{ guards.ratelimit.top_limited.map(t => `${t.ip}×${t.n}`).join('、') }}</span>
+            </div>
+          </el-col>
+          <el-col :span="12">
+            <div class="mini-title">熔断（closed / open / half_open，失败阈值 {{ guards.circuit.config?.fail_threshold }}）</div>
+            <div class="mini-row"><span class="mini-k">打开 / 半开</span>
+              <span class="mini-n"><span :class="{ bad: guards.circuit.open }">{{ guards.circuit.open || 0 }}</span> / {{ guards.circuit.half_open || 0 }}</span></div>
+            <div class="mini-row"><span class="mini-k">快速拒绝</span>
+              <span class="mini-n">{{ guards.circuit.rejected || 0 }}</span></div>
+            <div v-for="b in (guards.circuit.breakers || []).slice(0, 3)" :key="b.key" class="mini-row">
+              <span class="mini-k mono">{{ shortKey(b.key) }}</span>
+              <span class="mini-n">
+                {{ b.state }} · 拒 {{ b.rejects }}
+                <span v-if="b.open_remaining_s"> · {{ b.open_remaining_s }}s 后半开</span>
+                <span v-if="b.last_error" class="hint"> · {{ b.last_error.slice(0, 40) }}</span>
+              </span>
+            </div>
+            <div class="hint" style="margin-top: 6px">429 与 400 不计入熔断失败（上游健康 / 我们请求不合法）</div>
+          </el-col>
+        </el-row>
+      </el-card>
+
       <!-- 意图分析：用户在拿 agent 干什么、哪类意图贵/容易失败 -->
       <el-card shadow="never" style="margin-top: 12px">
         <template #header><div class="card-head"><span>意图分析</span>
@@ -282,6 +325,9 @@ const tools = computed(() => data.value?.tools || { by_tool: [], error_kinds: []
 const o = computed(() => data.value?.orchestration || { by_status: {}, step_status: [], step_models: [] })
 const intents = computed(() => data.value?.intents || { items: [], unclassified: 0 })
 const subagents = computed(() => data.value?.subagents || { roles: [] })
+const guards = computed(() => data.value?.guards || {
+  ratelimit: { config: {} }, circuit: { config: {}, breakers: [] },
+})
 const totalCost = computed(() => (data.value?.llm?.by_day || []).reduce((s, d) => s + (d.cost_cny || 0), 0))
 const maxDay = computed(() => Math.max(0.01, ...(data.value?.llm?.by_day || []).map((d) => d.cost_cny || 0)))
 
@@ -322,6 +368,11 @@ const KIND_ZH = {
 function statusZh(k) { return STATUS_ZH[k] || k }
 function roleZh(k) { return ROLE_ZH[k] || k }
 function kindZh(k) { return KIND_ZH[k] || k }
+// 熔断键是 "http://litellm:4000/v1|deepseek-chat"，面板只显示模型部分
+function shortKey(k) {
+  const parts = String(k || '').split('|')
+  return parts.length > 1 ? parts[parts.length - 1] : k
+}
 
 async function load() {
   loading.value = true

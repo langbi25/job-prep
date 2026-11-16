@@ -344,6 +344,14 @@ def _chat_json(system: str | None, user: str | None, tools: list | None = None,
     # （编排层会把同一份 messages 反复用于多轮，被改一次就永久多一句）
     messages = [dict(m) for m in messages]
     use_model = model or config.LLM_MODEL
+    # 熔断闸门：放在并发池**之前**。打开时立刻失败——不占池、不耗 90s 超时，
+    # 这是"雪崩"与"快速失败"的分水岭。键 = 上游 + 模型：换模型/换供应商时
+    # 各自独立，旧键自然冷却，不互相牵连。
+    from . import circuit as _circuit
+    _cbr = _circuit.breaker(f"{config.LLM_BASE_URL}|{use_model}")
+    if not _cbr.allow():
+        raise _circuit.CircuitOpenError(
+            _cbr.key, max(0.0, _cbr.open_until - time.monotonic()))
     body = {"model": use_model, "messages": messages, "temperature": temperature}
     if tools:
         body["tools"] = tools
@@ -369,6 +377,10 @@ def _chat_json(system: str | None, user: str | None, tools: list | None = None,
     }) as s:
         if s is not None and pool_wait_ms > 50:
             s.set_attribute("llm.pool_wait_ms", round(pool_wait_ms, 1))
+            # 熔断状态写进 span：排查"为什么这次特别快就失败了"时，能看到
+            # 当时是 closed 还是半开探针
+        if s is not None:
+            s.set_attribute("llm.circuit_state", _cbr.state)
         usage = None
         fell_back = False
         t_req = time.perf_counter()
@@ -396,6 +408,8 @@ def _chat_json(system: str | None, user: str | None, tools: list | None = None,
             # 先落失败账再看要不要降级：一次失败就是一次真实发生过的调用，
             # 不记的话"这轮很慢"永远查不出是模型在重试。
             _usage_failed(e_first, (time.perf_counter() - t_req) * 1000, model=use_model)
+            # 只有上游健康类失败才推动熔断（400 不算，429 不算，见 circuit.py）
+            _cbr.failure(e_first)
             if not stream:
                 raise
             # 流式失败降级非流式重试一次：可用性优先于观测细节。
@@ -419,6 +433,7 @@ def _chat_json(system: str | None, user: str | None, tools: list | None = None,
                 if on_delta is not None and msg.get("content"):
                     on_delta(msg["content"])
             except Exception as e_second:  # noqa: BLE001
+                _cbr.failure(e_second)
                 raise LLMError(
                     f"流式与非流式均失败（同一请求体）。\n首次: {e_first}\n重试: {e_second}",
                     status=getattr(e_first, "status", None),
@@ -426,6 +441,9 @@ def _chat_json(system: str | None, user: str | None, tools: list | None = None,
                 ) from e_second
         _call_count += 1
         _last_usage = usage
+        # 走到这里就是上游真的返回了一次可用响应（流式或降级后的非流式）：
+        # 半开探针成功 → 闭合；closed 状态顺手清掉累计失败数。
+        _cbr.success()
         # 成本核算：每次调用落一行台账（scene/session/turn 从 tracing 上下文取），
         # 并把 usage 挂回 msg["_usage"]——调用方从这取，不用进程级 last_usage
         # （编排三步并行时会互相覆盖，步费用会串账）。

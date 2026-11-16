@@ -79,6 +79,10 @@ app.add_middleware(
 # 两者只拦 /api，互不依赖对方的头。
 from .core.guard import GuardMiddleware  # noqa: E402
 app.add_middleware(GuardMiddleware)
+# 限流挂最外层（最后添加 = 最外层）：洪水不该享受"先解析 token 再拒绝"的待遇，
+# 鉴权也不该被刷爆。只拦 /api/*，静态资源与 /health 不受影响（见 ratelimit.py）。
+from .core.ratelimit import RateLimitMiddleware  # noqa: E402
+app.add_middleware(RateLimitMiddleware)
 
 app.include_router(cards.router)
 app.include_router(ingests.router)

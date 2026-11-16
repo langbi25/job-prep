@@ -423,6 +423,8 @@ def overview(days: int = 7) -> dict:
     而 7 天窗口里的均值会把今天的问题平均掉。
     """
     from ..core import budget
+    from ..core import circuit as _circuit
+    from ..core import ratelimit as _ratelimit
 
     llm = _llm(days)
     today = next((d for d in llm["by_day"]
@@ -435,6 +437,9 @@ def overview(days: int = 7) -> dict:
         "orchestration": _orchestration(days),
         "subagents": _agents(days),
         "intents": _intents(days),
+        # 限流与熔断是**进程内状态**（不是台账）：计数从进程启动起算，
+        # 重启归零。窗口口径与 days 无关，前端要标清楚，否则会被误读成"近 7 天"。
+        "guards": {"ratelimit": _ratelimit.stats(), "circuit": _circuit.stats()},
         "budget": {**budget.status(),
                    "today_cost_cny": (today or {}).get("cost_cny", 0.0),
                    "today_calls": (today or {}).get("calls", 0)},

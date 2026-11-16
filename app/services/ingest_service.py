@@ -11,8 +11,6 @@ import re
 import shutil
 import sqlite3
 
-import httpx
-
 from ..core import config, llm
 from ..core.db import get_conn
 from . import rag_service
@@ -37,16 +35,20 @@ def _source_site(url: str) -> str:
 
 
 def _fetch_url_text(url: str) -> str:
-    """通道 B：抓取 URL 并抽取正文。失败或正文过短时抛异常，由调用方降级为粘贴。"""
+    """通道 B：抓取 URL 并抽取正文。失败或正文过短时抛异常，由调用方降级为粘贴。
+
+    抓取走 `netguard`：协议/端口白名单 + 解析后 IP 校验 + 逐跳校验重定向。
+    这个入口接收的是用户给的任意 URL，不校验就等于让服务器替人访问内网。
+    """
     try:
         import trafilatura
     except ImportError:
         raise RuntimeError("未安装 trafilatura（pip install trafilatura），请使用粘贴投喂")
-    resp = httpx.get(url, timeout=10, follow_redirects=True, headers={
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-    })
-    resp.raise_for_status()
-    text = trafilatura.extract(resp.text, include_comments=False) or ""
+    from ..core import netguard
+
+    # UnsafeURLError 是 ValueError 子类 → API 层映射成 400（请求不合法，不是故障）
+    _final_url, html = netguard.fetch_text(url, timeout=10)
+    text = trafilatura.extract(html, include_comments=False) or ""
     if len(text.strip()) < 200:
         raise RuntimeError("正文抽取过短（该站可能需要登录或反爬），请改用粘贴投喂")
     return text
