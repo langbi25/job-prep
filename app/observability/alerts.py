@@ -1,4 +1,4 @@
-"""可观测告警：错误率 / 慢调用超阈值 → webhook 推送。
+"""可观测告警：错误率 / 慢调用 / 成本 / 工具 / 编排 / 容量 超阈值 → webhook 推送。
 
 数据源是本地 spans 表（事实源），不是 Langfuse/Phoenix——观测后端挂了告警也必须
 照常工作，这正是"本地主存、旁路导出"原则在告警上的延续。
@@ -50,6 +50,12 @@ def _env_int(name: str, default: int) -> int:
 RULE_COST = "cost_spike"
 RULE_TOOL_FAILURE = "tool_failure"
 RULE_PLAN_FAILURE = "plan_failure"
+# 容量三条（2026-11-17，阶段 C）：前五条都在看"业务跑得怎么样"，没有一条会在
+# **库悄悄长满 / 写锁开始排队**时提醒。这类问题不会让请求立刻失败，却会让备份
+# 越来越慢、写事务越来越挤——正是需要一个不依赖人工看面板的信号。
+RULE_CAPACITY_DB = "capacity_db_size"
+RULE_CAPACITY_LOCK = "capacity_write_lock"
+RULE_CAPACITY_GROWTH = "capacity_db_growth"
 
 
 def config() -> dict:
@@ -85,6 +91,17 @@ def config() -> dict:
         # 编排很稀疏（一天几条），用 5 分钟窗口永远凑不满样本。
         # 所以它单独用小时级窗口，其余规则用 window_min。
         "plan_window_min": _env_int("ALERT_PLAN_WINDOW_MIN", 180),
+        # 容量：体积用"占上限多少"，写锁用"最近半小时挡住几次"。
+        # 挡住率下限 3 个样本（15 分钟）：1 条样本的比率非 0 即 100%，报警等于扔硬币。
+        "db_size_ratio": _env_float("ALERT_DB_SIZE_RATIO", 0.8),
+        "lock_window_min": _env_int("ALERT_LOCK_WINDOW_MIN", 30),
+        "lock_min_samples": _env_int("ALERT_LOCK_MIN_SAMPLES", 3),
+        "lock_blocked_rate": _env_float("ALERT_LOCK_BLOCKED_RATE", 0.05),
+        "db_eta_days": _env_float("ALERT_DB_ETA_DAYS", 30),
+        "growth_min_samples": _env_int("ALERT_GROWTH_MIN_SAMPLES", 20),
+        # 没配 webhook 时判定仍然跑（落库能看到"本该报什么"），但冷却拉长，
+        # 否则每 30 分钟一条同样的记录，历史页会被自己的噪声淹掉。
+        "local_cooldown_min": _env_int("ALERT_LOCAL_COOLDOWN_MIN", 360),
     }
 
 
@@ -203,6 +220,20 @@ def plan_window_metrics(window_min: int) -> dict:
             "failure_rate": round(hard / total, 4) if total else 0.0}
 
 
+def capacity_metrics(lock_window_min: int = 30) -> dict:
+    """容量现状：最近窗口的写锁分布 + 当前体积 + 7 天增速外推。
+
+    数据源是 capacity_samples（worker 每 5 分钟采一次），不是每次现探——
+    告警循环不该自己去抢写锁，那会让"观测"变成被测对象的一部分。
+    """
+    from ..services import capacity_service as cap  # noqa: PLC0415
+
+    rec = cap.recent_stats(lock_window_min)
+    hist = cap.history(7)
+    return {**rec, "growth_bytes_per_day": hist["growth_bytes_per_day"],
+            "eta_days": hist["eta_days"], "samples_7d": hist["n"]}
+
+
 def _recently_alerted(rule: str, cooldown_min: int) -> bool:
     """冷却判定查 alerts 表：重启不丢状态，也不需要第二份内存状态。"""
     from ..core.db import get_conn  # noqa: PLC0415
@@ -280,10 +311,13 @@ def check_once() -> dict:
     cfg = config()
     metrics = window_metrics(cfg["window_min"])
     triggered, skipped = [], []
+    # 没配 webhook 时判定照跑（历史里能看到"本该报什么"），但冷却拉长到
+    # local_cooldown_min——否则每 30 分钟一条一模一样的记录，告警页被自己淹掉。
+    cool = cfg["cooldown_min"] if cfg["enabled"] else cfg["local_cooldown_min"]
 
     rate = metrics["error_rate"]
     if metrics["total"] >= cfg["min_calls"] and rate >= cfg["error_rate"]:
-        if _recently_alerted(RULE_ERROR_RATE, cfg["cooldown_min"]):
+        if _recently_alerted(RULE_ERROR_RATE, cool):
             skipped.append({"rule": RULE_ERROR_RATE, "reason": "冷却期内"})
         else:
             tops = "、".join(f"{t['name']}×{t['n']}" for t in metrics["top_errors"]) or "（无明细）"
@@ -295,7 +329,7 @@ def check_once() -> dict:
             triggered.append({"rule": RULE_ERROR_RATE, "delivered": ok, "error": err})
 
     if metrics["slow"] >= cfg["slow_count"]:
-        if _recently_alerted(RULE_SLOW, cfg["cooldown_min"]):
+        if _recently_alerted(RULE_SLOW, cool):
             skipped.append({"rule": RULE_SLOW, "reason": "冷却期内"})
         else:
             msg = (f"【job-prep 告警】慢调用集中：近 {cfg['window_min']} 分钟有 "
@@ -313,7 +347,7 @@ def check_once() -> dict:
     if cm["spike_ratio"] >= cfg["cost_spike_ratio"]:
         reasons.append(f"是近 {cm['prev_days']} 天日均的 {cm['spike_ratio']} 倍")
     if reasons and cm["today_cost_cny"] >= cfg["cost_min_cny"]:
-        if _recently_alerted(RULE_COST, cfg["cooldown_min"]):
+        if _recently_alerted(RULE_COST, cool):
             skipped.append({"rule": RULE_COST, "reason": "冷却期内"})
         else:
             msg = (f"【job-prep 告警】成本异常：今日已花 ¥{cm['today_cost_cny']:.2f}"
@@ -326,7 +360,7 @@ def check_once() -> dict:
     # ---- 工具失败率 ----
     tm = tool_window_metrics(cfg["window_min"])
     if tm["total"] >= cfg["tool_min_calls"] and tm["error_rate"] >= cfg["tool_error_rate"]:
-        if _recently_alerted(RULE_TOOL_FAILURE, cfg["cooldown_min"]):
+        if _recently_alerted(RULE_TOOL_FAILURE, cool):
             skipped.append({"rule": RULE_TOOL_FAILURE, "reason": "冷却期内"})
         else:
             tops = "、".join(f"{t['tool']}×{t['n']}" for t in tm["top_tools"]) or "（无明细）"
@@ -341,7 +375,7 @@ def check_once() -> dict:
     # ---- 编排失败率 ----
     pm = plan_window_metrics(cfg["plan_window_min"])
     if pm["total"] >= cfg["plan_min_plans"] and pm["failure_rate"] >= cfg["plan_failure_rate"]:
-        if _recently_alerted(RULE_PLAN_FAILURE, cfg["cooldown_min"]):
+        if _recently_alerted(RULE_PLAN_FAILURE, cool):
             skipped.append({"rule": RULE_PLAN_FAILURE, "reason": "冷却期内"})
         else:
             dist = "、".join(f"{k}×{v}" for k, v in sorted(pm["by_status"].items()))
@@ -353,8 +387,61 @@ def check_once() -> dict:
             _record(RULE_PLAN_FAILURE, "warning", msg, pm, ok, err)
             triggered.append({"rule": RULE_PLAN_FAILURE, "delivered": ok, "error": err})
 
+    # ---- 容量：体积 / 写锁 / 增速（阶段 C）--------------------------------
+    # 三条都读 capacity_samples（worker 每 5 分钟采），不在告警里现探写锁——
+    # 观测动作不该去抢被测资源。
+    capm = capacity_metrics(cfg["lock_window_min"])
+    size_mb = (capm["db_bytes"] or 0) / 1048576
+    limit_mb = round((capm["db_limit_bytes"] or 0) / 1048576)
+    ratio = capm["size_ratio"]
+
+    if ratio is not None and ratio >= cfg["db_size_ratio"]:
+        if _recently_alerted(RULE_CAPACITY_DB, cool):
+            skipped.append({"rule": RULE_CAPACITY_DB, "reason": "冷却期内"})
+        else:
+            full = ratio >= 1
+            msg = (f"【job-prep 告警】库体积{'已超上限' if full else '接近上限'}："
+                   f"{size_mb:.1f} MB / {limit_mb} MB"
+                   f"（{ratio:.0%} ≥ 阈值 {cfg['db_size_ratio']:.0%}）。"
+                   f"该排期换 Postgres（先补仓储接口，别让 SQL 散在业务里）；"
+                   f"换之前先把备份 + 恢复演练跑一遍确认时长还能接受。")
+            ok, err = _deliver(msg)
+            _record(RULE_CAPACITY_DB, "critical" if full else "warning", msg, capm, ok, err)
+            triggered.append({"rule": RULE_CAPACITY_DB, "delivered": ok, "error": err})
+
+    # 用"挡住率"而不是 P95 作触发面：探测预算 250ms，挡住一次 p95 就 ≥250ms，
+    # 两条样本就能让 P95 超线——那是统计假象。挡住率配最小样本数才说得通。
+    if (capm["n"] >= cfg["lock_min_samples"]
+            and capm["blocked_rate"] >= cfg["lock_blocked_rate"]):
+        if _recently_alerted(RULE_CAPACITY_LOCK, cool):
+            skipped.append({"rule": RULE_CAPACITY_LOCK, "reason": "冷却期内"})
+        else:
+            msg = (f"【job-prep 告警】SQLite 写锁排队：近 {cfg['lock_window_min']} 分钟 "
+                   f"{capm['n']} 次采样里 {capm['blocked']} 次被写锁挡住"
+                   f"（{capm['blocked_rate']:.0%} ≥ 阈值 {cfg['lock_blocked_rate']:.0%}，"
+                   f"P95 {capm['lock_wait_p95_ms']}ms）。先查长事务（批量迁移/清理、"
+                   f"事务里包了 LLM 调用），持续存在再谈换库或读写分离。")
+            ok, err = _deliver(msg)
+            _record(RULE_CAPACITY_LOCK, "warning", msg, capm, ok, err)
+            triggered.append({"rule": RULE_CAPACITY_LOCK, "delivered": ok, "error": err})
+
+    eta = capm["eta_days"]
+    if (eta is not None and eta <= cfg["db_eta_days"]
+            and capm["samples_7d"] >= cfg["growth_min_samples"]):
+        if _recently_alerted(RULE_CAPACITY_GROWTH, cool):
+            skipped.append({"rule": RULE_CAPACITY_GROWTH, "reason": "冷却期内"})
+        else:
+            grow_mb = (capm["growth_bytes_per_day"] or 0) / 1048576
+            msg = (f"【job-prep 告警】库体积增速偏快：日增 {grow_mb:.1f} MB，"
+                   f"按此速度约 {eta:.0f} 天到 {limit_mb} MB 上限"
+                   f"（阈值 {cfg['db_eta_days']:.0f} 天）。线性外推不是预测，"
+                   f"但值得先确认增长来自哪：span 保留期、台账累积，还是向量表。")
+            ok, err = _deliver(msg)
+            _record(RULE_CAPACITY_GROWTH, "warning", msg, capm, ok, err)
+            triggered.append({"rule": RULE_CAPACITY_GROWTH, "delivered": ok, "error": err})
+
     return {"checked": True, "metrics": metrics,
-            "cost": cm, "tools": tm, "plans": pm,
+            "cost": cm, "tools": tm, "plans": pm, "capacity": capm,
             "triggered": triggered, "skipped": skipped}
 
 

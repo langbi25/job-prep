@@ -266,6 +266,31 @@
         </template>
       </el-card>
 
+      <!-- 告警历史：规则在工作但推不出去，比"没告警"更危险 -->
+      <el-card shadow="never" style="margin-top: 12px">
+        <template #header><div class="card-head"><span>告警历史（近 7 天）</span>
+          <span class="hint">
+            {{ alertCfg.enabled ? `webhook 已配置（${alertCfg.webhook}）` : '未配置 webhook：只落库不推送' }}
+            · 冷却 {{ alertCfg.enabled ? alertCfg.cooldown_min : alertCfg.local_cooldown_min }} 分钟
+            · 判定在 worker 的 alerts_check 任务里跑（{{ alertCfg.check_sec || 60 }}s 一轮）
+          </span>
+          <el-button size="small" :loading="alertSending" @click="sendTest">发测试告警</el-button>
+        </div></template>
+        <div v-if="alertError" class="hint bad">读不到告警历史：{{ alertError }}</div>
+        <el-empty v-else-if="!histItems.length" description="近 7 天没有告警（阈值未触发）" :image-size="45" />
+        <div v-else class="alert-list">
+          <div v-for="(a, i) in histItems" :key="i" class="alert-row">
+            <el-tag size="small" :type="alertTag(a)" effect="plain">{{ ruleZh(a.rule) }}</el-tag>
+            <span class="alert-msg" :title="a.message">{{ stripPrefix(a.message) }}</span>
+            <span class="alert-meta hint">{{ fmtTs(a.ts) }}</span>
+            <span class="alert-meta hint" :class="{ bad: !a.delivered }">{{ a.delivered ? '已送达' : '未送达' }}</span>
+          </div>
+          <div v-if="alertHist.total > histItems.length" class="hint" style="margin-top: 6px">
+            共 {{ alertHist.total }} 条，这里显示最近 {{ histItems.length }} 条
+          </div>
+        </div>
+      </el-card>
+
       <!-- 意图分析：用户在拿 agent 干什么、哪类意图贵/容易失败 -->
       <el-card shadow="never" style="margin-top: 12px">
         <template #header><div class="card-head"><span>意图分析</span>
@@ -363,6 +388,7 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import api from '../api'
 
@@ -384,6 +410,11 @@ const cap = ref({})
 const capError = ref('')
 const capLoading = ref(false)
 const capSampleMin = computed(() => Math.max(1, Math.round((cap.value?.limits?.sample_interval_s || 300) / 60)))
+const alertHist = ref({ items: [], total: 0, config: {} })
+const alertError = ref('')
+const alertSending = ref(false)
+const histItems = computed(() => (alertHist.value.items || []).slice(0, 8))
+const alertCfg = computed(() => alertHist.value.config || {})
 const totalCost = computed(() => (data.value?.llm?.by_day || []).reduce((s, d) => s + (d.cost_cny || 0), 0))
 const maxDay = computed(() => Math.max(0.01, ...(data.value?.llm?.by_day || []).map((d) => d.cost_cny || 0)))
 
@@ -459,6 +490,45 @@ async function loadCap(refresh = false) {
   }
 }
 
+// ---- 告警历史 ----
+const RULE_ZH = {
+  error_rate: '错误率', slow_calls: '慢调用', cost_spike: '成本', tool_failure: '工具失败',
+  plan_failure: '编排失败', capacity_db_size: '库体积', capacity_write_lock: '写锁排队',
+  capacity_db_growth: '库增速', test: '链路测试',
+}
+function ruleZh(r) { return RULE_ZH[r] || r }
+function alertTag(a) {
+  if (a.severity === 'critical') return 'danger'
+  if (a.rule === 'test') return 'info'
+  return 'warning'
+}
+// 推送正文带【job-prep 告警】前缀（给 IM 看的），面板里重复显示没意义
+function stripPrefix(m) { return String(m || '').replace('【job-prep 告警】', '').replace('【job-prep 测试告警】', '') }
+function fmtTs(ts) { return String(ts || '').slice(5, 16).replace('T', ' ') }
+
+async function loadAlerts() {
+  alertError.value = ''
+  try {
+    alertHist.value = await api.get('/api/obs/alerts?days=7&limit=20')
+  } catch (e) {
+    alertError.value = e?.response?.data?.detail || '接口不可用'
+  }
+}
+
+async function sendTest() {
+  alertSending.value = true
+  try {
+    const r = await api.post('/api/obs/alerts/test')
+    if (r.delivered) ElMessage.success('测试告警已送达 webhook')
+    else ElMessage.warning(`未送达：${r.error || '原因未知'}（记录已落库）`)
+    await loadAlerts()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '发送失败')
+  } finally {
+    alertSending.value = false
+  }
+}
+
 async function load() {
   loading.value = true
   error.value = ''
@@ -469,8 +539,9 @@ async function load() {
   } finally {
     loading.value = false
   }
-  // 容量是独立接口：它挂了不该让整页指标跟着白屏，所以单独兜错
+  // 容量与告警都是独立接口：它们挂了不该让整页指标跟着白屏，所以各自兜错
   loadCap()
+  loadAlerts()
 }
 
 onMounted(load)
@@ -505,4 +576,8 @@ onMounted(load)
 .mini-n { color: #909399; font-size: 11px; }
 .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; }
 .cap-foot { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.alert-list { display: flex; flex-direction: column; gap: 7px; }
+.alert-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.alert-msg { flex: 1; min-width: 0; color: #303133; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alert-meta { flex: none; }
 </style>

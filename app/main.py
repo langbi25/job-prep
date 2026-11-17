@@ -66,20 +66,30 @@ async def lifespan(app: FastAPI):
     # 手动触发撞上定时执行时后到的一方记 skipped_locked，不会双跑。
     try:
         from .core import jobs as _jobs
-        if _jobs.start_scheduler():
+        _sched_on = _jobs.start_scheduler()
+        if _sched_on:
             print(f"[startup] job scheduler on: 每 {_jobs.scan_interval()}s 扫一轮到期任务")
         else:
             print("[startup] job scheduler disabled (JOBS_ENABLED=0)")
     except Exception as e:  # noqa: BLE001
+        _sched_on = False
         print(f"[startup] job scheduler skipped: {e}")
-    # 可观测告警：错误率/慢调用超阈值推 webhook。未配置 ALERT_WEBHOOK_URL 或
-    # ALERT_CHECK_SEC=0 时不启动，零开销。循环在守护线程里，判定失败只打日志。
+    # 可观测告警：错误率/慢调用/成本/工具/编排/容量超阈值推 webhook。
+    # **同一时刻只允许一份判定在跑**：调度器在本进程时由 alerts_check 任务执行
+    # （执行历史里留痕、挂了能看见）；容器部署里调度器关着、job 归 worker，
+    # 这里就什么都不做——以前这里无条件起线程，等于 api 偷偷背着后台任务，
+    # 与"一个进程一种职责"矛盾。
     try:
         from .observability import alerts as _alerts
-        if _alerts.start_background():
+        if _sched_on:
+            print("[startup] alerts: 由 job runner 的 alerts_check 任务执行")
+        elif _alerts.start_background():
             c = _alerts.config()
             print(f"[startup] alerts on: 每 {c['check_sec']}s 检查，"
                   f"错误率阈值 {c['error_rate']:.0%} / 慢调用 {c['slow_ms']}ms×{c['slow_count']}")
+        else:
+            # 本进程调度关着而且没起线程：判定归跑 job 的那个进程（容器里是 worker）
+            print("[startup] alerts: 本进程不判定，交给 job runner 的 alerts_check 任务")
     except Exception as e:  # noqa: BLE001
         print(f"[startup] alerts skipped: {e}")
     yield

@@ -40,3 +40,20 @@ def register_default_jobs() -> None:
         @_jobs.job("capacity_sample", interval_s=interval, timeout_s=60)
         def _capacity_sample_task() -> int:
             return int(_cap.sample()["db_bytes"])
+
+    if "alerts_check" not in _jobs.registry():
+        from ..observability import alerts as _alerts
+
+        # 告警判定：原来在 api 里跑一个守护线程，和"api 是纯请求面"矛盾；
+        # 搬成 job 之后进 worker，同一次检查还会在执行历史里留痕——
+        # 以前告警线程挂了只打一行日志，谁也不看。
+        # ALERT_CHECK_SEC=0 表示关掉（与单进程模式的语义保持一致），此时不注册。
+        try:
+            raw = int(os.environ.get("ALERT_CHECK_SEC", "") or 60)
+        except ValueError:
+            raw = 60
+        if raw > 0:
+
+            @_jobs.job("alerts_check", interval_s=max(raw, 10), timeout_s=120)
+            def _alerts_check_task() -> int:
+                return len(_alerts.check_once()["triggered"])

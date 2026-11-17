@@ -372,6 +372,37 @@ def evaluate(*, db_bytes: int, limit_bytes: int, growth_bytes_per_day: float | N
 # 汇总
 # ---------------------------------------------------------------------------
 
+def recent_stats(window_min: int = 30) -> dict:
+    """最近 N 分钟的**现状**（告警判定用）。
+
+    与 history() 的分工：history 回答"7 天趋势怎么样、按这速度多久到上限"，
+    这里回答"现在是不是已经在排队"。告警要的是后者——用 7 天 P95 报警，
+    意味着一次 20 分钟的长事务要等 7 天才响。
+
+    返回 blocked_rate 与 p95 都带样本数 n，让调用方自己决定下限：
+    n=1 时任何比率都是 0% 或 100%，直接报警等于随机喊狼。
+    """
+    since = (datetime.datetime.now()
+             - datetime.timedelta(minutes=max(1, int(window_min)))).isoformat(timespec="seconds")
+    rows = db.get_conn().execute(
+        "SELECT ts, db_bytes, wal_bytes, lock_wait_ms, lock_blocked, rows_total, load1, cpu_count "
+        "FROM capacity_samples WHERE ts >= ? ORDER BY ts", (since,)).fetchall()
+    items = [dict(r) for r in rows]
+    n = len(items)
+    waits = [int(x["lock_wait_ms"] or 0) for x in items]
+    blocked = sum(int(x["lock_blocked"] or 0) for x in items)
+    latest = items[-1] if items else None
+    limit = db_limit_bytes()
+    return {"window_min": max(1, int(window_min)), "n": n, "blocked": blocked,
+            "blocked_rate": round(blocked / n, 4) if n else 0.0,
+            "lock_wait_p95_ms": _p95(waits),
+            "lock_wait_max_ms": max(waits) if waits else None,
+            "db_bytes": int(latest["db_bytes"]) if latest else None,
+            "wal_bytes": int(latest["wal_bytes"]) if latest else None,
+            "db_limit_bytes": limit,
+            "size_ratio": round(latest["db_bytes"] / limit, 4) if (latest and limit) else None}
+
+
 def report(refresh: bool = False, days: int = 7) -> dict:
     """面板用：最新快照 + 近 7 天趋势 + 四项判定。"""
     from ..core import circuit as _circuit
