@@ -3,7 +3,9 @@ services:
     build: .
     image: job-prep-api:latest
     command: uvicorn app.main:app --host 0.0.0.0 --port 8765 --workers 1
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false   # CI 干净检出没有 .env：校验与构建只依赖 job env 的假值
     environment:
       HF_ENDPOINT: https://hf-mirror.com
       # 容器默认 UTC。不设这个，span 的 start_ts 会比本地早 8 小时，
@@ -94,7 +96,9 @@ services:
     image: job-prep-api:latest
     command: python -m app.mcp.server --http --host 0.0.0.0 --port 8766
     profiles: ["mcp"]
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false   # CI 干净检出没有 .env：校验与构建只依赖 job env 的假值
     environment:
       TZ: Asia/Shanghai
       HF_ENDPOINT: https://hf-mirror.com
@@ -140,7 +144,9 @@ services:
     build: .
     image: job-prep-api:latest
     command: python -m app.worker
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false   # CI 干净检出没有 .env：校验与构建只依赖 job env 的假值
     environment:
       TZ: Asia/Shanghai
     depends_on:

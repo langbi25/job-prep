@@ -92,7 +92,13 @@ def test_eval_scorer():
     assert mcp_eval._args_ok({}, {"anything": 1}) == (True, [])
 
 
-def test_board_payload_shape():
+def test_board_payload_shape(tmp_path, monkeypatch):
+    """跑在临时库上：CI 是干净检出，没有 data/ 目录，连默认库都会 disk I/O
+    （2026-11-18 首跑暴露）。看板只读，临时库 + 建表即可。"""
+    from app.core import db as _db
+    monkeypatch.setattr(_db, "DB_PATH", str(tmp_path / "kb.sqlite"))
+    _db.close_thread_conns()
+    _db.init_db()
     b = mcp_board.mcp_board()
     assert b["status"]["tools"] == 9
     assert b["status"]["read_only"] == 6 and b["status"]["write"] == 3

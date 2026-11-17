@@ -6,7 +6,7 @@ Windows 上句柄没关，pytest 清理 tmp_path 时报 WinError 32。
 """
 import pytest
 
-from app.core import db
+from app.core import config, db
 from app.observability import tracing as tr
 
 
@@ -15,6 +15,11 @@ def _release_db_conns(monkeypatch):
     # 评测进料默认在测试里关闭：失败轮会写 data/eval_intake.jsonl（真实数据目录），
     # 测试不该往里面倒垃圾。被测模块在自己的用例里显式打开。
     monkeypatch.setenv("EVAL_INTAKE", "0")
+    # 测试必须对宿主 .env 免疫（CI 是干净检出，没有 .env）：llm._chat_json 入口
+    # 会检查 config.LLM_API_KEY，本机跑测试靠 .env 兜着，CI 上 6 个用例因此团灭
+    # （2026-11-18 首次暴露）。这里统一给假 key——真网络调用没有测试依赖它。
+    monkeypatch.setattr(config, "LLM_API_KEY", "test-key-hermetic", raising=False)
+    monkeypatch.setenv("LLM_API_KEY", "test-key-hermetic")
     yield
     db.close_thread_conns()
     # span 用独立连接写库（避开业务事务），不在 db 的池里，得单独关。
