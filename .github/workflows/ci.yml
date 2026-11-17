@@ -85,8 +85,10 @@ jobs:
   # 这关把"Dockerfile 改坏"（依赖装不上、COPY 路径漂移、compose 配置非法）挡在合并前。
   docker:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
+      # CI 用 pypi 官方源（GitHub 机房走阿里云镜像慢到超时，run #6 实测 20min 打断）
+      PIP_INDEX_URL: https://pypi.org/simple
       # compose 里密钥用 :? 语法（缺失即拒绝渲染），校验结构用假值即可
       LITELLM_MASTER_KEY: dummy-for-config-check
       DEEPSEEK_API_KEY: dummy-for-config-check

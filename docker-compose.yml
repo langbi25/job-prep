@@ -1,6 +1,10 @@
 services:
   api:
-    build: .
+    build:
+      context: .
+      args:
+        # 国内宿主默认走阿里云源；CI（GitHub 机房）用官方源，速度快一个数量级
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
     image: job-prep-api:latest
     command: uvicorn app.main:app --host 0.0.0.0 --port 8765 --workers 1
     env_file:
@@ -61,18 +65,26 @@ services:
       - default
       - obs   # 与 deploy/langfuse 共享：容器间用服务名 langfuse-web 访问，不走宿主端口
 
-  # 每日备份 sidecar：与 api 同镜像，只跑备份循环。
+  # 备份 sidecar：与 api 同镜像，只跑三层快照循环（PITR-lite）。
   # 独立成容器而不是塞进 api 的进程里——备份失败/卡住不影响在线服务，
   # 反过来 api 频繁重启也不会把备份节奏打乱。
+  # 三层保留见 scripts/backup_db.py 头注释：RPO ≤5min，恢复用 restore_pitr.py。
   backup:
-    build: .
+    build:
+      context: .
+      args:
+        # 国内宿主默认走阿里云源；CI（GitHub 机房）用官方源，速度快一个数量级
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
     image: job-prep-api:latest
     command: python scripts/backup_loop.py
     environment:
       TZ: Asia/Shanghai
       BACKUP_DIR: /backup
-      BACKUP_KEEP: "7"
       BACKUP_AT_HOUR: "2"
+      BACKUP_KEEP_DAILY: "7"      # 近一周
+      BACKUP_KEEP_HOURLY: "24"    # 近一天
+      BACKUP_KEEP_MICRO: "12"     # 近一小时（每 5 分钟一份）
+      BACKUP_MICRO_SEC: "300"
     volumes:
       - ./backups:/backup
       # 注意：必须是读写挂载。WAL 模式下即使只是读，SQLite 也要建 -shm 共享内存文件，
@@ -92,7 +104,11 @@ services:
   # 启用前必须在 .env 设 MCP_TOKEN（server.py 对非本地地址强制要求，
   # 没设会直接退出并打印原因——宁可起不来，也不要静默裸奔）。
   mcp:
-    build: .
+    build:
+      context: .
+      args:
+        # 国内宿主默认走阿里云源；CI（GitHub 机房）用官方源，速度快一个数量级
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
     image: job-prep-api:latest
     command: python -m app.mcp.server --http --host 0.0.0.0 --port 8766
     profiles: ["mcp"]
@@ -141,7 +157,11 @@ services:
   # 共享卷上的文件锁（跨容器成立），写竞争靠 busy_timeout 排队（app/core/db.py）。
   # 当前任务集是 DB 清理类， volumes 只挂数据卷；未来加碰文件的任务再补挂载。
   worker:
-    build: .
+    build:
+      context: .
+      args:
+        # 国内宿主默认走阿里云源；CI（GitHub 机房）用官方源，速度快一个数量级
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
     image: job-prep-api:latest
     command: python -m app.worker
     env_file:
@@ -184,7 +204,11 @@ services:
   litellm:
     # 与 api 同镜像（requirements.txt 里装了 litellm 包）。不用 ghcr 官方镜像：
     # 国内拉不动，pip 阿里云源稳定；代价是镜像大 ~300MB，2C2G 上可接受。
-    build: .
+    build:
+      context: .
+      args:
+        # 国内宿主默认走阿里云源；CI（GitHub 机房）用官方源，速度快一个数量级
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
     image: job-prep-api:latest
     command: ["litellm", "--config", "/app/litellm/config.yaml", "--port", "4000"]
     environment:
