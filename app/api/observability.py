@@ -176,3 +176,16 @@ def audit_log(days: int = 7, limit: int = 100):
     return {"available": True, "total": total, "denied_401": denied,
             "items": [dict(zip(("ts", "actor", "action", "path", "query", "ip", "status", "duration_ms"), r))
                       for r in rows]}
+
+
+@router.get("/capacity")
+def capacity(refresh: bool = False, days: int = 7):
+    """容量快照 + 扩容触发条件判定（阶段 C）。
+
+    `refresh=true` 强制立即采一次（面板上的"重新采样"按钮）。否则只在样本
+    超过两个采样周期时自动补采——正常点开面板是读已有趋势，不是每次都去打
+    一次写锁探测。
+    """
+    from ..services import capacity_service
+
+    return capacity_service.report(refresh=refresh, days=max(1, min(int(days), 30)))

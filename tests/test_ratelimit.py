@@ -138,3 +138,27 @@ def test_disabled_switch(monkeypatch):
     for _ in range(10):
         assert c.get("/api/ping").status_code == 200
     assert ratelimit.stats() == {"config": {"enabled": False}}
+
+
+# --- 反代场景的客户端 IP（阶段 A：nginx web 容器）------------------------------
+
+def test_client_ip_default_ignores_xff(monkeypatch):
+    """默认不信任 X-Forwarded-For：api 自己也监听端口，直连客户端可伪造 XFF。"""
+    monkeypatch.delenv("RATE_LIMIT_TRUST_PROXY", raising=False)
+    scope = {"client": ("1.2.3.4", 5), "headers": [(b"x-forwarded-for", b"9.9.9.9")]}
+    assert ratelimit._client_ip(scope) == "1.2.3.4"
+
+
+def test_client_ip_trust_proxy_takes_first_hop(monkeypatch):
+    """信任反代时取第一段（nginx 用 $proxy_add_x_forwarded_for 追加，真实客户端在首位）。"""
+    monkeypatch.setenv("RATE_LIMIT_TRUST_PROXY", "1")
+    scope = {"client": ("172.18.0.9", 5),
+             "headers": [(b"x-forwarded-for", b"9.9.9.9, 172.18.0.9")]}
+    assert ratelimit._client_ip(scope) == "9.9.9.9"
+
+
+def test_client_ip_trust_proxy_falls_back_to_peer(monkeypatch):
+    """没带 XFF 头就退回 TCP 对端地址——反代直连 api 时也不至于报 '?'。"""
+    monkeypatch.setenv("RATE_LIMIT_TRUST_PROXY", "1")
+    scope = {"client": ("172.18.0.9", 5), "headers": []}
+    assert ratelimit._client_ip(scope) == "172.18.0.9"

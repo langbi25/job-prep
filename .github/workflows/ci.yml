@@ -1,9 +1,9 @@
 name: ci
 
-# 单元测试与前端构建门禁。
+# 单元测试、前端构建与镜像构建门禁。
 #
 # 和 evals.yml 的分工：
-#   ci.yml    —— 全量单元/集成测试 + 树搜索逻辑 + 前端能否构建。零 LLM 成本，每次 push/PR 必跑。
+#   ci.yml    —— 全量单元/集成测试 + 树搜索逻辑 + 前端能否构建 + 镜像/compose 能否构建。零 LLM 成本，每次 push/PR 必跑。
 #   evals.yml —— 检索快检 + 全量评测（要 LLM_API_KEY），质量趋势，跑得慢。
 # 两者都绿才算"可以发"：测试保证"改坏了能发现"，评测保证"变差了能发现"。
 
@@ -80,3 +80,29 @@ jobs:
       - name: 构建
         run: npm run build
         working-directory: frontend
+
+  # 阶段 B（2026-11-17）：镜像构建进门禁。测试绿 + 镜像构建失败 = 部署那天才发现，
+  # 这关把"Dockerfile 改坏"（依赖装不上、COPY 路径漂移、compose 配置非法）挡在合并前。
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # compose 里密钥用 :? 语法（缺失即拒绝渲染），校验结构用假值即可
+      LITELLM_MASTER_KEY: dummy-for-config-check
+      DEEPSEEK_API_KEY: dummy-for-config-check
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: compose 配置校验
+        run: docker compose config -q
+
+      - name: 构建 api 镜像（不推送，推送归部署流程）
+        run: docker build -t job-prep-api:ci .
+
+      # web 镜像吃 dist 产物：先构建前端（与宿主交付同一约定），再打镜像
+      - name: 构建前端产物
+        run: npm ci && npm run build
+        working-directory: frontend
+
+      - name: 构建 web 镜像（不推送）
+        run: docker build -t job-prep-web:ci ./frontend

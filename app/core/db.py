@@ -1,5 +1,6 @@
 import datetime
 import json
+import os
 import sqlite3
 import threading
 from pathlib import Path
@@ -18,6 +19,21 @@ _FTS_TRIGGERS = {
 # 线程局部连接池：{DB_PATH: conn}。键必须含 DB_PATH——测试会把 DB_PATH 换到临时目录，
 # 若只按线程缓存，换库后拿到的还是旧库的连接，测试互相写脏数据且极难排查。
 _local = threading.local()
+
+
+def _busy_timeout_ms() -> int:
+    """写锁等待时长（毫秒）。env 可调，默认 5000。
+
+    容器化之后库被多个进程同时打开（api 写业务表、worker 写 job_runs、
+    backup ro 读），WAL 同一时刻只允许一个写者——第二个写者必须排队等
+    busy_timeout，而不是立刻吃 "database is locked"。5s 的依据：本库的
+    写事务都是毫秒级（清理/记账），正常撞锁几毫秒就散；等满 5s 还抢不到
+    说明真有长事务，那种错误应当暴露而不是被掩盖。
+    """
+    try:
+        return max(int(os.environ.get("SQLITE_BUSY_TIMEOUT_MS", "") or 5000), 100)
+    except ValueError:
+        return 5000
 
 
 class _PooledConn(sqlite3.Connection):
@@ -67,6 +83,9 @@ def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, factory=_PooledConn)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # 跨进程写竞争的排队时间（见 _busy_timeout_ms）。WAL 是库级持久属性
+    # （schema.sql 第一行设过），busy_timeout 是连接级属性，必须每条连接都设。
+    conn.execute(f"PRAGMA busy_timeout = {_busy_timeout_ms()}")
     pool[key] = conn
     return conn
 

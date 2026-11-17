@@ -515,7 +515,11 @@ def _chat_inner(message: str, session_id: str | None, mode: str, trace_id: str =
             "artifacts": _artifacts(all_trace), "iterations": len(all_trace),
             "prompt_version": prompt_ver, "mode": mode, "skill": skill_info,
             "skill_candidates": skill_board if not sk else None,
-            "ctx": ctx_acc, "inflight": inflight}
+            "ctx": ctx_acc, "inflight": inflight,
+            # 段级失败必须回到响应体：reply 里的"（第 X 段执行失败…）"是人读的，
+            # error 字段是给客户端程序化判定的——混沌演练实测发现这个键漏了，
+            # 200 + 空错误让调用方分不清"答好了"和"这轮根本没跑成"。
+            "error": seg_error}
 
 
 def _short_args(args: dict) -> dict:

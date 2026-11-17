@@ -54,6 +54,28 @@ def enabled() -> bool:
     return os.environ.get("RATE_LIMIT_ENABLED", "1").strip() not in ("0", "false", "off")
 
 
+def trust_proxy() -> bool:
+    """是否信任 X-Forwarded-For（nginx 反代场景还原真实客户端 IP）。
+
+    默认关。开启的前提是入口收敛到反代：api 自己也监听端口时，直连的
+    客户端可以伪造 XFF 冒充任意 IP 绕过按 IP 限流——本机自用无所谓，
+    对外暴露 8765 时必须保持关闭或把 api 端口收进内网。
+    """
+    return os.environ.get("RATE_LIMIT_TRUST_PROXY", "0").strip() in ("1", "true", "True")
+
+
+def _client_ip(scope) -> str:
+    if trust_proxy():
+        for k, v in scope.get("headers") or []:
+            if k.lower() == b"x-forwarded-for":
+                # nginx 用 $proxy_add_x_forwarded_for 追加，真实客户端在第一段
+                first = v.decode("latin-1").split(",")[0].strip()
+                if first:
+                    return first
+                break
+    return (scope.get("client") or ("?", 0))[0] or "?"
+
+
 class _Bucket:
     """令牌桶：容量 burst，每秒补 rate 个。
 
@@ -214,7 +236,7 @@ class RateLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        ip = (scope.get("client") or ("?", 0))[0] or "?"
+        ip = _client_ip(scope)
         lim = get_limiter()
         ok, wait = lim.check(ip)
         if ok:

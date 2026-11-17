@@ -139,12 +139,19 @@ async def run(args) -> tuple[list[dict], dict]:
     limits = httpx.Limits(max_connections=max(args.stages) + 10)
     verdict_stages: list[dict] = []
     async with httpx.AsyncClient(base_url=args.base_url, limits=limits) as client:
-        # 预检：目标端点不通就直接失败，别压了 30 秒才发现 404
-        pre = await client.request(
-            args.method, args.path,
-            headers={"X-API-Token": token} if token else {},
-            content=json.dumps(args.payload).encode() if args.payload else None,
-            timeout=args.timeout)
+        # 预检：目标端点不通就直接失败，别压了 30 秒才发现 404。
+        # 连接异常也要拦：实测踩过——base_url 指到没人听的端口，预检本身
+        # 抛异常但不拦的话，后面每一发都是"错误率 100% 的毫秒级失败"，数据全废。
+        try:
+            pre = await client.request(
+                args.method, args.path,
+                headers={"X-API-Token": token} if token else {},
+                content=json.dumps(args.payload).encode() if args.payload else None,
+                timeout=args.timeout)
+        except Exception as e:  # noqa: BLE001
+            print(f"[预检失败] 连不上 {args.base_url}：{type(e).__name__}: {e}",
+                  file=sys.stderr)
+            sys.exit(2)
         if pre.status_code >= 500:
             print(f"[预检失败] {args.path} 返回 {pre.status_code}，先修服务再压测",
                   file=sys.stderr)
@@ -171,7 +178,7 @@ async def run(args) -> tuple[list[dict], dict]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("用法")[0])
     ap.add_argument("--base-url", default=os.environ.get("LOAD_BASE_URL",
-                                                         "http://127.0.0.1:8000"))
+                                                         "http://127.0.0.1:8765"))
     ap.add_argument("--path", default="/api/stats", help="默认 /api/stats（只读无害）")
     ap.add_argument("--method", default="GET")
     ap.add_argument("--payload", default=None, help="JSON 字符串（POST/PUT 时用）")

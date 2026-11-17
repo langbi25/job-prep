@@ -15,6 +15,13 @@ services:
       # LLM 走网关：容器内用 compose 服务名（127.0.0.1 指容器自己，不通）。
       # .env 里留的是宿主视角地址（127.0.0.1:4000），本地 uvicorn 直跑也能连网关。
       LLM_BASE_URL: http://litellm:4000/v1
+      # 阶段 A（进程职责分离）：api 变纯请求面，调度循环归 worker 容器。
+      # 文件锁在共享卷上，手动触发（api）撞上定时执行（worker）会记
+      # skipped_locked 而不是双跑；本地 uvicorn 直跑不设这个，单进程照旧。
+      JOBS_ENABLED: "0"
+      # nginx 反代场景还原真实客户端 IP（不然按 IP 限流看到的全是容器内网地址）。
+      # 前提：8765 只本机访问——对外暴露直连端口时客户端可伪造 XFF 绕过限流。
+      RATE_LIMIT_TRUST_PROXY: "1"
     # 网关没就绪就起 api，首批 LLM 调用会集体失败再靠重试救——
     # 不如等 healthcheck 通过。网关挂了 api 起不来是网关模式的既定语义。
     depends_on:
@@ -124,6 +131,43 @@ services:
     networks:
       - default
       - obs   # 与 api 一致：MCP 的工具调用也要能导出 span
+
+  # 后台任务 worker（阶段 A）：与 api 同镜像，只跑调度循环（python -m app.worker）。
+  # api 设 JOBS_ENABLED=0 后，job runner 的定时任务全在这里跑。互斥靠 DATA_DIR
+  # 共享卷上的文件锁（跨容器成立），写竞争靠 busy_timeout 排队（app/core/db.py）。
+  # 当前任务集是 DB 清理类， volumes 只挂数据卷；未来加碰文件的任务再补挂载。
+  worker:
+    build: .
+    image: job-prep-api:latest
+    command: python -m app.worker
+    env_file: .env
+    environment:
+      TZ: Asia/Shanghai
+    depends_on:
+      litellm:
+        condition: service_healthy
+    volumes:
+      - jobprep_data:/app/data
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "2" }
+    restart: unless-stopped
+
+  # 前端 nginx（阶段 A）：静态资源 + /api 反代，补齐"前后端各一个容器"的
+  # 交付形态。api 自带的 StaticFiles 托管保留——直连 8765 的老入口不受影响，
+  # nginx 是更完整的形态而非必需路径。dist 在宿主机 npm run build 生成
+  # （与 api 镜像同一约定：构建机不依赖 node），见 frontend/Dockerfile。
+  web:
+    build: ./frontend
+    image: job-prep-web:latest
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "2" }
+    restart: unless-stopped
 
   # LLM 网关（LiteLLM）：所有 LLM 调用的统一出口。应用层说的本来就是标准
   # OpenAI 协议，指向网关即可零改动切换；换模型/加供应商/做 fallback 全是改

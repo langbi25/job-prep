@@ -774,3 +774,25 @@ CREATE TABLE IF NOT EXISTS job_runs (
   error       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_job_runs_job ON job_runs(job, ts DESC);
+
+-- ---------------------------------------------------------------------------
+-- 容量采样（app/services/capacity_service.py，阶段 C）。
+--
+-- 一行 = 一次 5 分钟快照。存趋势而不是只存当前值，是因为"该不该换库"这类
+-- 决定要看的是斜率与分布（P95、挡住率），不是某一刻的读数。保留 30 天，
+-- 清理由采样 job 自己顺手做（少一个独立 job 就少一处"挂了没人发现"）。
+--
+-- lock_blocked=1 表示探测等满 250ms 仍没拿到写锁——这是"写事务真的长到
+-- 影响别人"的硬信号；lock_wait_ms 在没被挡住时是真实排队时长（空闲≈0）。
+CREATE TABLE IF NOT EXISTS capacity_samples (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts           TEXT NOT NULL,
+  db_bytes     INTEGER NOT NULL,
+  wal_bytes    INTEGER NOT NULL DEFAULT 0,
+  lock_wait_ms INTEGER,
+  lock_blocked INTEGER NOT NULL DEFAULT 0,
+  rows_total   INTEGER NOT NULL DEFAULT 0,     -- 热表 MAX(rowid) 之和，写量代理
+  load1        REAL,                            -- 宿主 loadavg（Windows 为 NULL）
+  cpu_count    INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_capacity_ts ON capacity_samples(ts DESC);

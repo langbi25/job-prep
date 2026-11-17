@@ -214,6 +214,58 @@
         </el-row>
       </el-card>
 
+      <!-- 扩容决策：把"要不要换库/加副本"变成可复核的阈值，而不是感觉 -->
+      <el-card shadow="never" style="margin-top: 12px">
+        <template #header><div class="card-head"><span>扩容决策（触发条件驱动）</span>
+          <span class="hint">
+            样本每 {{ capSampleMin }} 分钟一次 ·
+            近 {{ cap.history?.days || 7 }} 天 {{ cap.history?.n || 0 }} 条 ·
+            阈值与判定逻辑在 capacity_service.evaluate()
+          </span></div></template>
+        <div v-if="capError" class="hint bad">读不到容量数据：{{ capError }}</div>
+        <template v-else>
+          <el-alert :title="cap.verdict || '暂无数据'" :closable="false" show-icon
+                    :type="cap.triggered_n ? 'error' : (cap.warn_n ? 'warning' : 'success')"
+                    style="margin-bottom: 12px" />
+          <el-table :data="cap.triggers || []" size="small">
+            <el-table-column label="决策项" min-width="240">
+              <template #default="{ row }">
+                <div>{{ row.label }}</div>
+                <div class="hint">{{ row.why }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column label="当前读数" min-width="230">
+              <template #default="{ row }">
+                <span class="mono">
+                  <template v-for="(s, i) in row.signals" :key="s.k">
+                    <span v-if="i" class="hint"> · </span>
+                    {{ s.k }} <span :class="{ bad: s.bad }">{{ s.v }}</span>
+                  </template>
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="触发后怎么做" min-width="240" show-overflow-tooltip>
+              <template #default="{ row }"><span class="hint">{{ row.action }}</span></template>
+            </el-table-column>
+            <el-table-column label="状态" width="86" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" :type="capTag(row.state)" effect="plain">{{ capZh(row.state) }}</el-tag>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div class="cap-foot">
+            <span class="hint">
+              库 {{ mb(cap.sample?.db_bytes) }}（上限 {{ cap.limits?.db_limit_mb }} MB）·
+              日增 {{ cap.history?.growth_bytes_per_day ? mb(cap.history.growth_bytes_per_day) + '/天' : '样本不足' }} ·
+              写锁 P95 {{ cap.history?.lock_wait_p95_ms ?? '—' }}ms ·
+              写入 {{ cap.history?.rows_per_min ?? '—' }} 行/分
+              <span v-if="cap.history?.eta_days"> · 按当前增速约 {{ cap.history.eta_days }} 天到上限（线性外推，非预测）</span>
+            </span>
+            <el-button size="small" :loading="capLoading" @click="loadCap(true)">重新采样</el-button>
+          </div>
+        </template>
+      </el-card>
+
       <!-- 意图分析：用户在拿 agent 干什么、哪类意图贵/容易失败 -->
       <el-card shadow="never" style="margin-top: 12px">
         <template #header><div class="card-head"><span>意图分析</span>
@@ -328,6 +380,10 @@ const subagents = computed(() => data.value?.subagents || { roles: [] })
 const guards = computed(() => data.value?.guards || {
   ratelimit: { config: {} }, circuit: { config: {}, breakers: [] },
 })
+const cap = ref({})
+const capError = ref('')
+const capLoading = ref(false)
+const capSampleMin = computed(() => Math.max(1, Math.round((cap.value?.limits?.sample_interval_s || 300) / 60)))
 const totalCost = computed(() => (data.value?.llm?.by_day || []).reduce((s, d) => s + (d.cost_cny || 0), 0))
 const maxDay = computed(() => Math.max(0.01, ...(data.value?.llm?.by_day || []).map((d) => d.cost_cny || 0)))
 
@@ -374,6 +430,35 @@ function shortKey(k) {
   return parts.length > 1 ? parts[parts.length - 1] : k
 }
 
+// 扩容决策的状态语义：manual = 指标判断不了，只能由部署事实决定（多机/K8s）
+const CAP_ZH = { ok: '正常', warn: '接近', triggered: '触发', manual: '人工' }
+function capZh(s) { return CAP_ZH[s] || s }
+function capTag(s) {
+  if (s === 'triggered') return 'danger'
+  if (s === 'warn') return 'warning'
+  if (s === 'manual') return 'info'
+  return 'success'
+}
+function mb(v) {
+  const n = Number(v || 0)
+  if (!n) return '0 MB'
+  return n >= 1024 * 1024 * 1024
+    ? `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`
+    : `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
+async function loadCap(refresh = false) {
+  capLoading.value = true
+  capError.value = ''
+  try {
+    cap.value = await api.get(`/api/obs/capacity?days=${days.value}${refresh ? '&refresh=true' : ''}`)
+  } catch (e) {
+    capError.value = e?.response?.data?.detail || '接口不可用'
+  } finally {
+    capLoading.value = false
+  }
+}
+
 async function load() {
   loading.value = true
   error.value = ''
@@ -384,6 +469,8 @@ async function load() {
   } finally {
     loading.value = false
   }
+  // 容量是独立接口：它挂了不该让整页指标跟着白屏，所以单独兜错
+  loadCap()
 }
 
 onMounted(load)
@@ -417,4 +504,5 @@ onMounted(load)
 .mini-bar i { display: block; height: 100%; border-radius: 3px; }
 .mini-n { color: #909399; font-size: 11px; }
 .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; }
+.cap-foot { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 </style>

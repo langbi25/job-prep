@@ -3,6 +3,11 @@ deploy/**/.env.langfuse
 data/kb.sqlite
 data/app.db
 data/job_prep.sqlite3
+# SQLite 运行时伴随文件与 job 文件锁：都是进程活着的证据，重启就变，不该进版本库
+data/*.sqlite-wal
+data/*.sqlite-shm
+data/*.sqlite-journal
+data/*.lock
 data/tool_flags.json
 data/_backup/
 data/_tmp_live/

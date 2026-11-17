@@ -1,4 +1,5 @@
 import json
+import signal
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -12,6 +13,20 @@ from .core import config
 from .core.config import ensure_dirs
 from .core.db import init_db
 from .services.syncer import sync_all
+
+
+def _chaos_crash_hook(_signum, _frame):
+    """混沌钩子：SIGUSR1 → 硬崩溃（os._exit，绕过优雅退出）。
+
+    为什么存在：演练"进程突然死亡"必须让 PID1 自己死。两个内核/守护进程的
+    限制都是实测得出的（2026-11-17，见 scripts/chaos_drill.py）——
+    1) 命名空间内发给 PID1 的 SIGKILL/SIGTERM 默认行为被内核忽略；
+    2) `docker kill` 被守护进程视为人为停止，restart 策略根本不触发。
+    只有"装了 handler 的信号 + 进程自愿退出"才能走出真实的崩溃→重启路径。
+    SIGUSR1 系统无占用，约定为本钩子专用；正常业务永不发送它。
+    """
+    import os as _os
+    _os._exit(137)
 
 
 @asynccontextmanager
@@ -36,26 +51,19 @@ async def lifespan(app: FastAPI):
         print(f"[startup] vector index: {idx}")
     except Exception as e:  # noqa: BLE001
         print(f"[startup] vector index skipped: {e}")
-    # span 分级清理迁移进 job runner（app/core/jobs.py）：以前只在启动时清一次，
-    # 长驻进程几天不清、span 表悄悄膨胀；现在注册成 6h 间隔的任务，启动即到期
-    # 首跑，行为与旧版兼容但长期不再依赖"恰好重启"。
+    # 默认任务注册表（app/core/jobdefs.py）：api 进程注册是为了观测面板与
+    # 手动触发按钮。调度执行不在这里——容器部署里调度归 worker 容器
+    # （python -m app.worker，api 设 JOBS_ENABLED=0），单进程直跑时下面的
+    # start_scheduler 照旧在本进程跑，两种形态共用同一份任务定义。
     try:
-        from .observability import tracing as _tr
-        from .core import jobs as _jobs
-
-        _pruned = {"n": 0}
-
-        @_jobs.job("prune_spans", interval_s=6 * 3600, timeout_s=300)
-        def _prune_spans_task():
-            _pruned["n"] = _tr.prune_spans()
-
-        gone = _jobs.run_job("prune_spans")   # 启动即清一次（兜住重启前欠的账）
-        if gone.get("status") == "success":
-            print(f"[startup] spans pruned: {_pruned['n']} 条（job runner: 每 6h 一轮）")
+        from .core import jobdefs as _jobdefs
+        _jobdefs.register_default_jobs()
     except Exception as e:  # noqa: BLE001
-        print(f"[startup] span prune skipped: {e}")
+        print(f"[startup] job registry skipped: {e}")
     # 通用调度器：表驱动任务（jobs 表）+ 文件锁互斥 + 执行历史（job_runs 表）。
-    # JOBS_ENABLED=0 时不启动。新任务用 @jobs.job(...) 装饰器注册，启动即跑。
+    # JOBS_ENABLED=0 时不启动（compose 里 api 就设 0，调度在 worker 容器）。
+    # 文件锁落在 DATA_DIR：容器模式下它与 worker 共享 named volume，
+    # 手动触发撞上定时执行时后到的一方记 skipped_locked，不会双跑。
     try:
         from .core import jobs as _jobs
         if _jobs.start_scheduler():
@@ -88,6 +96,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Job Prep KB", version="0.1.0", lifespan=lifespan)
+# 平台保护：Windows 没有 SIGUSR1（测试在本机跑会 AttributeError）；非主线程
+# 导入时 signal.signal 抛 ValueError。钩子只在 Linux 容器里真正有用。
+if hasattr(signal, "SIGUSR1"):
+    try:
+        signal.signal(signal.SIGUSR1, _chaos_crash_hook)
+    except ValueError:
+        pass
 
 app.add_middleware(
     CORSMiddleware,

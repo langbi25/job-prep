@@ -193,3 +193,59 @@ def test_prune_runs_removes_old(fresh_db):
     conn.commit()
     assert jobs.prune_runs(keep_days=30) >= 1
     assert jobs.runs(limit=10) == []
+
+
+# --- 跨进程/跨容器（阶段 A：worker 独立容器 + busy_timeout）---------------------
+
+def test_busy_timeout_set_on_connections(fresh_db):
+    """业务连接必须带 busy_timeout：跨进程写竞争靠它排队，没有就是秒抛 locked。"""
+    v = db.get_conn().execute("PRAGMA busy_timeout").fetchone()[0]
+    assert v >= 5000
+
+
+def test_busy_timeout_waits_for_write_lock(fresh_db, monkeypatch):
+    """模拟另一进程持写锁：等待方排队 0.2s 后拿到锁，而不是立刻 OperationalError。"""
+    import sqlite3 as _sq
+    import threading as _th
+    monkeypatch.setenv("SQLITE_BUSY_TIMEOUT_MS", "3000")
+    db.close_thread_conns()  # 丢弃旧连接，让 env 在新建连接时生效
+
+    # check_same_thread=False：锁在主线程占、后台线程放——这正是要模拟的跨线程场景
+    holder = _sq.connect(db.DB_PATH, check_same_thread=False)
+    holder.execute("BEGIN IMMEDIATE")  # 占住写锁（模拟 worker 正在写 job_runs）
+    released = _th.Event()
+
+    def _release():
+        released.wait(timeout=5)
+        holder.commit()
+        holder.close()
+
+    _th.Thread(target=_release, daemon=True).start()
+    timer = _th.Timer(0.2, released.set)  # 0.2s 后放锁——等待方已经挂在锁上
+    timer.start()
+    try:
+        conn = db.get_conn()
+        conn.execute("CREATE TABLE IF NOT EXISTS probe_lock (id INTEGER PRIMARY KEY, v TEXT)")
+        conn.execute("INSERT INTO probe_lock (v) VALUES ('ok')")
+        conn.commit()  # 没有 busy_timeout 这里会立刻抛 database is locked
+        n = db.get_conn().execute("SELECT COUNT(*) FROM probe_lock").fetchone()[0]
+        assert n == 1
+    finally:
+        released.set()
+        timer.join()
+
+
+def test_jobdefs_registers_defaults(fresh_db):
+    """api 与 worker 共享的注册表入口：注册后 registry 有 prune_spans，可落库。"""
+    from app.core import jobdefs
+    jobdefs.register_default_jobs()
+    assert "prune_spans" in jobs.registry()
+    assert jobs.sync_registry() == len(jobs.registry())
+
+
+def test_jobdefs_idempotent(fresh_db):
+    from app.core import jobdefs
+    jobdefs.register_default_jobs()
+    n = len(jobs.registry())
+    jobdefs.register_default_jobs()
+    assert len(jobs.registry()) == n

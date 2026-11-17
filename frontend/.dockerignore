@@ -1,0 +1,9 @@
+# 前端镜像只需要 dist 和 nginx.conf，源码与依赖全部排除：
+# node_modules 不进上下文（15 万个文件，Windows 上既慢又可能路径超长）。
+node_modules/
+src/
+scripts/
+package.json
+package-lock.json
+vite.config.js
+index.html
