@@ -174,7 +174,11 @@ def test_wecom_payload_format(fresh_db, monkeypatch):
     assert payload["msgtype"] == "markdown" and "content" in payload["markdown"]
     payload = alerts._payload("测试", "dingtalk")
     assert payload["markdown"]["title"] and payload["markdown"]["text"] == "测试"
-    assert alerts._payload("测试", "generic") == {"text": "测试"}
+    # generic 带 level 字段（分级路由的接收端协议）；severity 只改前缀不改正文，
+    # 消息里没有"【job-prep 告警】"标记时（如纯测试文案）保持原样
+    assert alerts._payload("测试", "generic") == {"text": "测试", "level": "warning"}
+    p = alerts._payload("【job-prep 告警】错误率过高", "generic", "critical")
+    assert p == {"text": "【job-prep 告警·CRITICAL】错误率过高", "level": "critical"}
 
 
 def test_history_masks_webhook(fresh_db, no_webhook):

@@ -271,6 +271,8 @@
         <template #header><div class="card-head"><span>告警历史（近 7 天）</span>
           <span class="hint">
             {{ alertCfg.enabled ? `webhook 已配置（${alertCfg.webhook}）` : '未配置 webhook：只落库不推送' }}
+            · 分级 {{ alertCfg.routes?.critical === '独立' ? 'critical 独立通道' : 'critical 兜底' }}/{{ alertCfg.routes?.warning === '独立' ? 'warning 独立通道' : 'warning 兜底' }}
+            · {{ alertCfg.quiet_start ? `静默 ${alertCfg.quiet_start}-${alertCfg.quiet_end}（只落库）` : '无静默时段' }}
             · 冷却 {{ alertCfg.enabled ? alertCfg.cooldown_min : alertCfg.local_cooldown_min }} 分钟
             · 判定在 worker 的 alerts_check 任务里跑（{{ alertCfg.check_sec || 60 }}s 一轮）
           </span>

@@ -31,6 +31,9 @@ import tempfile
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from backup_db import parse_backup_ts  # noqa: E402  分层命名后共享时间戳解析
+
 KEY_TABLES = ("kb_cards", "question_pool", "ingests", "agent_plans",
               "llm_usage", "tool_calls", "spans", "turn_facts")
 STALE_HOURS = 48
@@ -48,12 +51,19 @@ def _resolve_dir(explicit: str | None) -> Path:
 
 
 def pick_latest(directory: Path) -> Path | None:
-    """按文件名时间戳取最新一份（与 backup_db 的轮转排序规则一致）。"""
-    files = sorted(directory.glob("kb-*.sqlite3.gz")) + sorted(directory.glob("kb-*.sqlite3"))
-    if not files:
-        return None
-    # 文件名带时间戳，字典序即时间序；同前缀的 .sqlite3 与 .sqlite3.gz 都能识别
-    return max(files, key=lambda p: p.name.split(".")[0])
+    """按文件名时间戳取最新一份。
+
+    分层快照（kb-micro-/kb-hourly-/kb-daily-）之后字典序不再等于时间序
+    （"kb-m" > "kb-2"，micro 永远压过旧 daily），必须解析时间戳再比。
+    """
+    best: tuple[object, Path] | None = None
+    for p in directory.glob("kb-*.sqlite3*"):
+        ts = parse_backup_ts(p.name)
+        if ts is None:
+            continue
+        if best is None or ts > best[0]:
+            best = (ts, p)
+    return best[1] if best else None
 
 
 def _open_readonly(path: Path) -> sqlite3.Connection:
