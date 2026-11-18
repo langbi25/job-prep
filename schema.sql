@@ -740,7 +740,16 @@ CREATE TABLE IF NOT EXISTS alerts (
   message   TEXT NOT NULL,                    -- 中文可读正文（即推送内容）
   metrics   TEXT NOT NULL DEFAULT '{}',       -- 触发时的判定数据快照（JSON）
   delivered INTEGER NOT NULL DEFAULT 0,       -- 1=webhook 返回了 2xx
-  error     TEXT
+  error     TEXT,
+  -- 生命周期（2026-11-18）：告警不只有"发没发出去"，还有"有没有人管"。
+  -- critical 告警推送出去之后如果没人认领，升级链按 escalate 参数反复提醒；
+  -- 这些列就是"谁在几点几分接手了"的事实源。
+  ack_ts    TEXT,                             -- 认领时间（NULL=无人认领）
+  ack_by    TEXT,                             -- 认领人（面板操作默认 'panel'）
+  resolved_ts TEXT,                           -- 关闭时间（NULL=未关闭）
+  escalations INTEGER NOT NULL DEFAULT 0,     -- 已自动升级次数
+  last_escalate_ts TEXT,                      -- 最近一次升级推送时间
+  escalate_error TEXT                          -- 最近一次升级推送的失败原因
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_ts ON alerts(ts DESC);
 

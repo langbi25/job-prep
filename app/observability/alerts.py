@@ -128,6 +128,13 @@ def config() -> dict:
         # 支持跨午夜（23:00-07:00），两端相等视为未配置。
         "quiet_start": (os.getenv("ALERT_QUIET_START") or "").strip(),
         "quiet_end": (os.getenv("ALERT_QUIET_END") or "").strip(),
+        # 升级链（2026-11-18）：critical 告警推送后 escalate_min 分钟无人认领，
+        # 就往 critical 通道再推一条"升级"提醒，每隔 escalate_repeat_min 一次，
+        # 最多 escalate_max 次（之后认定链路无人值守，再刷屏只是疲劳不是行动）。
+        # escalate_min=0 整体关闭。认领（ack）或关闭（resolve）后立即停。
+        "escalate_min": _env_int("ALERT_ESCALATE_MIN", 15),
+        "escalate_repeat_min": _env_int("ALERT_ESCALATE_REPEAT_MIN", 30),
+        "escalate_max": _env_int("ALERT_ESCALATE_MAX", 3),
         "severity_map": dict(RULE_SEVERITY),
     }
 
@@ -489,9 +496,14 @@ def check_once() -> dict:
               f"（阈值 {cfg['db_eta_days']:.0f} 天）。线性外推不是预测，"
               f"但值得先确认增长来自哪：span 保留期、台账累积，还是向量表。", capm)
 
+    # ---- 升级链：critical 无人认领的，往 critical 通道再催一遍 ----------------
+    # 放在 check_once 末尾（而不是独立 job）：它和判定共享"同一时刻只在一个
+    # 进程跑"的语义，且 60s 一轮的判定周期正好是升级扫描需要的粒度。
+    escalated = escalation_sweep()
+
     return {"checked": True, "metrics": metrics,
             "cost": cm, "tools": tm, "plans": pm, "capacity": capm,
-            "triggered": triggered, "skipped": skipped}
+            "triggered": triggered, "skipped": skipped, "escalated": escalated}
 
 
 def history(days: int = 1, limit: int = 50) -> dict:
@@ -502,7 +514,8 @@ def history(days: int = 1, limit: int = 50) -> dict:
     conn = get_conn()
     try:
         rows = conn.execute(
-            "SELECT ts, rule, severity, message, metrics, delivered, error "
+            "SELECT id, ts, rule, severity, message, metrics, delivered, error, "
+            "ack_ts, ack_by, resolved_ts, escalations, last_escalate_ts, escalate_error "
             "FROM alerts WHERE ts >= ? ORDER BY id DESC LIMIT ?",
             (since, max(1, min(int(limit), 200)))).fetchall()
         total = conn.execute(
@@ -514,11 +527,190 @@ def history(days: int = 1, limit: int = 50) -> dict:
         conn.close()
     return {"available": True, "total": total, "deliver_failed": int(failed),
             "config": config(),
-            "items": [{"ts": r["ts"], "rule": r["rule"], "severity": r["severity"],
-                       "message": r["message"],
+            "items": [{"id": r["id"], "ts": r["ts"], "rule": r["rule"],
+                       "severity": r["severity"], "message": r["message"],
                        "metrics": json.loads(r["metrics"] or "{}"),
-                       "delivered": bool(r["delivered"]), "error": r["error"]}
+                       "delivered": bool(r["delivered"]), "error": r["error"],
+                       "ack_ts": r["ack_ts"], "ack_by": r["ack_by"],
+                       "resolved_ts": r["resolved_ts"],
+                       "escalations": int(r["escalations"] or 0),
+                       "last_escalate_ts": r["last_escalate_ts"],
+                       "escalate_error": r["escalate_error"]}
                       for r in rows]}
+
+
+# ---- 升级链 + 认领/关闭闭环（2026-11-18）------------------------------------
+#
+# 分级路由解决的是"critical 走哪条通道"，升级链解决的是"推出去之后没人管怎么办"
+# ——webhook 是单向的，"已送达"不等于"有人看到了"。闭环的另一半是认领/关闭：
+# 没有这两个动作，升级链就不知道什么时候该停。
+
+def _needs_escalate(age_min: float, escalations: int, since_last_min: float | None,
+                    escalate_min: int, repeat_min: int, max_n: int) -> bool:
+    """升级判定的纯函数（测试钉边界用）。
+
+    - 推出后不满 escalate_min 分钟：给值班的人留反应时间，别一推送就催；
+    - 已升级满 max_n 次：升级链不是无限复读机，超过上限认定"通道无人值守"，
+      此时应修的是值班安排而不是继续刷屏；
+    - 距上次升级不满 repeat_min：升级之间也要冷却，否则 60s 的判定周期会
+      把"每分钟一条升级"变成告警疲劳的另一种形态。
+    """
+    if age_min < escalate_min:
+        return False
+    if escalations >= max_n:
+        return False
+    if since_last_min is not None and since_last_min < repeat_min:
+        return False
+    return True
+
+
+_ESCALATION_SCAN_HOURS = 24   # 只扫最近一天的告警——更老的事故要么已处理要么已死
+
+
+def _get_alert(alert_id: int) -> dict | None:
+    from ..core.db import get_conn  # noqa: PLC0415
+
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id, rule, severity, message, ts, ack_ts, ack_by, resolved_ts, "
+            "escalations, last_escalate_ts FROM alerts WHERE id=?",
+            (int(alert_id),)).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
+def ack_alert(alert_id: int, by: str = "panel") -> dict:
+    """认领：有人接手了这条告警。幂等——重复认领返回 already，不覆盖原认领人。
+
+    升级链读到 ack_ts 立即停手，所以认领动作本身就是"停止升级"的开关。
+    """
+    from ..core.db import get_conn  # noqa: PLC0415
+
+    row = _get_alert(alert_id)
+    if not row:
+        return {"ok": False, "error": f"告警 #{alert_id} 不存在"}
+    if row["ack_ts"]:
+        return {"ok": True, "already": True, "ack_by": row["ack_by"],
+                "ack_ts": row["ack_ts"]}
+    ts = datetime.datetime.now().isoformat(timespec="milliseconds")
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE alerts SET ack_ts=?, ack_by=? WHERE id=?",
+                     (ts, (by or "panel").strip() or "panel", int(alert_id)))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "already": False, "ack_by": by, "ack_ts": ts}
+
+
+def resolve_alert(alert_id: int, by: str = "panel") -> dict:
+    """关闭：这条告警对应的问题处置完了。
+
+    关闭隐含认领（处置过的人就是认领过的人）——升级链两个开关都看。
+    幂等：已关闭的直接返回，不覆盖关闭时间。
+    """
+    from ..core.db import get_conn  # noqa: PLC0415
+
+    row = _get_alert(alert_id)
+    if not row:
+        return {"ok": False, "error": f"告警 #{alert_id} 不存在"}
+    if row["resolved_ts"]:
+        return {"ok": True, "already": True, "resolved_ts": row["resolved_ts"]}
+    ts = datetime.datetime.now().isoformat(timespec="milliseconds")
+    conn = get_conn()
+    try:
+        if row["ack_ts"]:
+            conn.execute("UPDATE alerts SET resolved_ts=? WHERE id=?",
+                         (ts, int(alert_id)))
+        else:
+            conn.execute("UPDATE alerts SET resolved_ts=?, ack_ts=?, ack_by=? WHERE id=?",
+                         (ts, ts, (by or "panel").strip() or "panel", int(alert_id)))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "already": False, "resolved_ts": ts}
+
+
+def open_alerts(hours: int = 24) -> dict:
+    """未认领且未关闭的告警（面板徽标用）：这是"当前还欠着人处理"的清单。"""
+    from ..core.db import get_conn  # noqa: PLC0415
+
+    since = _since_iso(max(1, int(hours)) * 60)
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT id, ts, rule, severity, message, escalations "
+            "FROM alerts WHERE ts >= ? AND ack_ts IS NULL AND resolved_ts IS NULL "
+            "AND rule != 'test' ORDER BY id DESC LIMIT 100", (since,)).fetchall()
+    finally:
+        conn.close()
+    return {"items": [{"id": r["id"], "ts": r["ts"], "rule": r["rule"],
+                       "severity": r["severity"], "message": r["message"],
+                       "escalations": int(r["escalations"] or 0)} for r in rows],
+            "total": len(rows)}
+
+
+def escalation_sweep(now: datetime.datetime | None = None) -> list[dict]:
+    """升级扫描：找出"critical 且无人认领且超时"的告警，往 critical 通道再推一条。
+
+    同一规则只升级**最新**一条未认领告警——规则触发有冷却，冷却一过同一条规则
+    又会插一条新行；对旧行也升级的话，一次故障会同时升级三四个影子副本。
+    now 参数可注入（测试不依赖真实时钟）。升级推送失败也如实记录
+    （escalate_error）——"升级链自己哑了"必须可发现，与主推送同一纪律。
+    """
+    from ..core.db import get_conn  # noqa: PLC0415
+
+    cfg = config()
+    emin, repeat, maxn = cfg["escalate_min"], cfg["escalate_repeat_min"], cfg["escalate_max"]
+    if emin <= 0 or maxn <= 0:
+        return []
+    now = now or datetime.datetime.now()
+    since = (now - datetime.timedelta(hours=_ESCALATION_SCAN_HOURS)).isoformat(
+        timespec="milliseconds")
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT id, rule, severity, message, ts, ack_ts, resolved_ts, "
+            "escalations, last_escalate_ts FROM alerts "
+            "WHERE severity='critical' AND rule != 'test' AND ts >= ? "
+            "ORDER BY id DESC", (since,)).fetchall()
+    finally:
+        conn.close()
+
+    out = []
+    seen_rules: set[str] = set()   # 每条规则只考虑最新一行（rows 已按 id 倒序）
+    for r in rows:
+        if r["rule"] in seen_rules:
+            continue
+        seen_rules.add(r["rule"])
+        if r["ack_ts"] or r["resolved_ts"]:
+            continue
+        age = (now - datetime.datetime.fromisoformat(r["ts"])).total_seconds() / 60
+        since_last = None
+        if r["last_escalate_ts"]:
+            since_last = (now - datetime.datetime.fromisoformat(
+                r["last_escalate_ts"])).total_seconds() / 60
+        if not _needs_escalate(age, int(r["escalations"] or 0), since_last,
+                               emin, repeat, maxn):
+            continue
+        n = int(r["escalations"] or 0) + 1
+        msg = (f"【job-prep 告警·升级】critical 告警已 {age:.0f} 分钟无人认领"
+               f"（第 {n}/{maxn} 次升级，规则 {r['rule']}）：{r['message']}")
+        ok, err = _deliver(msg, "critical")
+        ts = now.isoformat(timespec="milliseconds")
+        conn2 = get_conn()
+        try:
+            conn2.execute(
+                "UPDATE alerts SET escalations=?, last_escalate_ts=?, escalate_error=? "
+                "WHERE id=?", (n, ts, err, r["id"]))
+            conn2.commit()
+        finally:
+            conn2.close()
+        out.append({"id": r["id"], "rule": r["rule"], "n": n,
+                    "delivered": ok, "error": err})
+    return out
 
 
 def _loop() -> None:

@@ -275,6 +275,7 @@
             · {{ alertCfg.quiet_start ? `静默 ${alertCfg.quiet_start}-${alertCfg.quiet_end}（只落库）` : '无静默时段' }}
             · 冷却 {{ alertCfg.enabled ? alertCfg.cooldown_min : alertCfg.local_cooldown_min }} 分钟
             · 判定在 worker 的 alerts_check 任务里跑（{{ alertCfg.check_sec || 60 }}s 一轮）
+            · {{ alertCfg.escalate_min > 0 ? `critical 无人认领 ${alertCfg.escalate_min} 分钟自动升级（至多 ${alertCfg.escalate_max} 次）` : '升级链关闭' }}
           </span>
           <el-button size="small" :loading="alertSending" @click="sendTest">发测试告警</el-button>
         </div></template>
@@ -284,8 +285,19 @@
           <div v-for="(a, i) in histItems" :key="i" class="alert-row">
             <el-tag size="small" :type="alertTag(a)" effect="plain">{{ ruleZh(a.rule) }}</el-tag>
             <span class="alert-msg" :title="a.message">{{ stripPrefix(a.message) }}</span>
+            <el-tag v-if="a.escalations > 0" size="small" type="danger" effect="dark" class="alert-meta">
+              已升级 {{ a.escalations }} 次
+            </el-tag>
+            <el-tag v-if="a.resolved_ts" size="small" type="success" effect="plain" class="alert-meta">已关闭</el-tag>
+            <el-tag v-else-if="a.ack_ts" size="small" type="success" effect="plain" class="alert-meta">
+              已认领{{ a.ack_by ? `·${a.ack_by}` : '' }}
+            </el-tag>
             <span class="alert-meta hint">{{ fmtTs(a.ts) }}</span>
             <span class="alert-meta hint" :class="{ bad: !a.delivered }">{{ a.delivered ? '已送达' : '未送达' }}</span>
+            <span v-if="!a.resolved_ts && a.rule !== 'test'" class="alert-meta">
+              <el-button v-if="!a.ack_ts" size="small" link type="primary" :loading="actingId === a.id" @click="ackAlert(a)">认领</el-button>
+              <el-button size="small" link type="success" :loading="actingId === a.id" @click="resolveAlert(a)">关闭</el-button>
+            </span>
           </div>
           <div v-if="alertHist.total > histItems.length" class="hint" style="margin-top: 6px">
             共 {{ alertHist.total }} 条，这里显示最近 {{ histItems.length }} 条
@@ -528,6 +540,33 @@ async function sendTest() {
     ElMessage.error(e?.response?.data?.detail || '发送失败')
   } finally {
     alertSending.value = false
+  }
+}
+
+// ---- 认领 / 关闭闭环：升级链读 ack 状态决定停不停，所以认领动作本身就是"停止催办" ----
+const actingId = ref(null)
+async function ackAlert(a) {
+  actingId.value = a.id
+  try {
+    await api.post(`/api/obs/alerts/${a.id}/ack`)
+    ElMessage.success('已认领，升级链停止催办')
+    await loadAlerts()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '认领失败')
+  } finally {
+    actingId.value = null
+  }
+}
+async function resolveAlert(a) {
+  actingId.value = a.id
+  try {
+    await api.post(`/api/obs/alerts/${a.id}/resolve`)
+    ElMessage.success('已关闭')
+    await loadAlerts()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '关闭失败')
+  } finally {
+    actingId.value = null
   }
 }
 

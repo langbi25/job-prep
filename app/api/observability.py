@@ -121,6 +121,38 @@ def alert_test():
     return alerts.send_test()
 
 
+@router.get("/alerts/open")
+def alerts_open(hours: int = 24):
+    """未认领且未关闭的告警——"当前还欠着人处理"的清单，面板徽标数据源。"""
+    from ..observability import alerts
+
+    return alerts.open_alerts(hours)
+
+
+@router.post("/alerts/{alert_id}/ack")
+def alert_ack(alert_id: int, by: str = "panel"):
+    """认领告警：有人接手了。升级链读到 ack 立即停手——认领即"停止催办"。"""
+    from ..observability import alerts
+
+    r = alerts.ack_alert(alert_id, by)
+    if not r.get("ok"):
+        from fastapi import HTTPException
+        raise HTTPException(404, r.get("error", "告警不存在"))
+    return r
+
+
+@router.post("/alerts/{alert_id}/resolve")
+def alert_resolve(alert_id: int, by: str = "panel"):
+    """关闭告警：问题处置完了。关闭隐含认领（处置过即认领过）。"""
+    from ..observability import alerts
+
+    r = alerts.resolve_alert(alert_id, by)
+    if not r.get("ok"):
+        from fastapi import HTTPException
+        raise HTTPException(404, r.get("error", "告警不存在"))
+    return r
+
+
 @router.get("/jobs")
 def jobs_snapshot():
     """定时任务注册表 + 执行历史（最近 50 条）。

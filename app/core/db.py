@@ -251,6 +251,18 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     if "trace_id" not in ccols2:
         conn.execute("ALTER TABLE tool_calls ADD COLUMN trace_id TEXT")
 
+    # 告警生命周期（2026-11-18）：认领/关闭/升级链。老库补列默认 NULL/0 是诚实的
+    # ——历史告警"没人认领过"和"没人管"在补列那一刻无法区分，按未处理对待即可。
+    acols2 = {r["name"] for r in conn.execute("PRAGMA table_info(alerts)")}
+    for col, ddl in (("ack_ts", "TEXT"),
+                     ("ack_by", "TEXT"),
+                     ("resolved_ts", "TEXT"),
+                     ("escalations", "INTEGER NOT NULL DEFAULT 0"),
+                     ("last_escalate_ts", "TEXT"),
+                     ("escalate_error", "TEXT")):
+        if col not in acols2:
+            conn.execute(f"ALTER TABLE alerts ADD COLUMN {col} {ddl}")
+
     # 策略拒绝回填（2026-11-15）：早期把"只查不改模式下拒绝写工具"记成 failed，
     # 工具失败率因此混进一批**根本没执行**的调用（实测 13 条错里 11 条是这类，
     # remember 甚至 6/6 全是拒绝）。新写入走 agent_tools._denied 自带的 error_kind，
